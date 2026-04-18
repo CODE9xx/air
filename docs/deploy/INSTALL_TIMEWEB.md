@@ -272,13 +272,16 @@ CORS_ORIGINS=https://$DOMAIN_APP
 
 # --- CRM / Email / Mock ---
 MOCK_CRM_MODE=true
+# Gate A: console (коды видны в логах api), Gate B: smtp — см. "Phase 1 — SMTP" ниже.
 EMAIL_BACKEND=console
 DEV_EMAIL_MODE=log
 SMTP_HOST=
 SMTP_PORT=587
+SMTP_MODE=starttls
 SMTP_USER=
 SMTP_PASSWORD=
 SMTP_FROM=noreply@$DOMAIN_APP
+SMTP_TIMEOUT_SECONDS=10
 
 # --- Admin bootstrap ---
 ADMIN_BOOTSTRAP_EMAIL=$ADMIN_BOOTSTRAP_EMAIL
@@ -623,6 +626,120 @@ make prod-tw-restore BACKUP=$BACKUP
 
 ---
 
+## 9a. Gate B Phase 1 — включение Timeweb SMTP
+
+> Делается **после** Gate A (контейнеры healthy, `https://$DOMAIN_APP` открывается,
+> регистрация + логин через console-коды в логах уже работают).
+> Цель: заменить console-backend на реальную отправку через Timeweb SMTP, чтобы
+> письма по сбросу пароля / подтверждению e-mail / подтверждению удаления
+> подключения приходили на ящик пользователя.
+
+### 9a.1. На стороне Timeweb — завести почтовый ящик
+
+Выполняется вручную в панели Timeweb (агент не имеет туда доступа):
+
+1. Панель Timeweb → **Почта** → выбрать домен `$DOMAIN_APP` → **Создать ящик**:
+   - Имя: `noreply`
+   - Пароль: сгенерируй (password manager).
+2. Открой карточку ящика → вкладка **Настройки SMTP**. Запиши:
+   - SMTP-host: обычно `smtp.timeweb.ru`
+   - Порты: `465` (SSL) и `587` (STARTTLS).
+3. Вкладка **DKIM** → скопируй DNS-запись и добавь её в DNS зоны `$DOMAIN_APP`:
+   - `default._domainkey.$DOMAIN_APP TXT "v=DKIM1; k=rsa; p=..."`
+4. Добавь SPF и DMARC в DNS зоны:
+   - `@ TXT "v=spf1 include:_spf.timeweb.ru ~all"`
+   - `_dmarc.$DOMAIN_APP TXT "v=DMARC1; p=quarantine; rua=mailto:postmaster@$DOMAIN_APP"`
+5. Подожди 5–10 минут, проверь:
+   ```bash
+   dig +short TXT $DOMAIN_APP | grep spf
+   dig +short TXT default._domainkey.$DOMAIN_APP
+   dig +short TXT _dmarc.$DOMAIN_APP
+   ```
+
+### 9a.2. На VPS — обновить .env.production и перезапустить api/worker
+
+```bash
+cd /opt/code9-analytics
+
+# Бэкап текущего .env
+cp .env.production .env.production.$(date -u +%Y%m%dT%H%M%SZ).bak
+
+# Открыть и заменить блок Email (см. .env.production.template, секция Gate B).
+nano .env.production
+```
+
+Нужные значения:
+
+```ini
+EMAIL_BACKEND=smtp
+SMTP_HOST=smtp.timeweb.ru
+SMTP_PORT=465
+SMTP_MODE=ssl              # если 465. Для 587 → starttls
+SMTP_USER=noreply@$DOMAIN_APP
+SMTP_PASSWORD=<пароль_из_шага_9a.1>
+SMTP_FROM=noreply@$DOMAIN_APP
+SMTP_TIMEOUT_SECONDS=10
+```
+
+Перезапуск:
+
+```bash
+make prod-tw-down
+make prod-tw-up
+make prod-tw-ps           # api / worker / scheduler healthy
+make prod-tw-logs api | tail -n 50 | grep -iE "smtp|email"   # не должно быть traceback'ов
+```
+
+**Fail-fast guard:** если `APP_ENV=production` + `EMAIL_BACKEND=smtp` + пустой
+`SMTP_HOST` — api-контейнер не стартует (валидатор в `app.core.settings`).
+Это дешёвая страховка от «забыл подставить» — не баг, а фича.
+
+### 9a.3. Тестовая доставка
+
+Цель: убедиться, что письмо реально приходит на внешний ящик.
+
+```bash
+# 1. Зарегистрируй тестового пользователя с ящиком, к которому у тебя есть доступ:
+curl -sS -X POST https://$DOMAIN_API/api/v1/auth/password-reset/request \
+     -H "Content-Type: application/json" \
+     -d '{"email":"kyzx@yandex.ru"}'
+# → 204 (анти-энумерация, всегда 204)
+
+# 2. Проверь логи:
+make prod-tw-logs api | grep email_sent | tail -n 5
+# → должна быть запись backend=smtp, subject=..., без кода в теле лога.
+
+# 3. Открой входящие kyzx@yandex.ru — в папке "Входящие" или "Спам" должно
+#    быть письмо "Code9: сброс пароля" с 6-значным кодом.
+```
+
+Если письмо в спаме — значит DKIM/SPF/DMARC ещё не пропагнулись. Подожди
+15–30 минут, проверь `dig` ещё раз, повтори.
+
+Если письмо не пришло вообще, смотри `email_send_failed` в логах. Типовые
+причины (в логе `error_type`):
+
+- `SMTPAuthenticationError` → пароль ящика неправильный.
+- `SMTPConnectError` / `socket.timeout` → Timeweb режет outbound 465 с VPS
+  (бывает при новом аккаунте — пиши в саппорт) или неправильный host/port.
+- `SMTPSenderRefused` → `SMTP_FROM` не совпадает с `SMTP_USER` (Timeweb
+  требует `From:` = аутентифицированный ящик).
+
+### 9a.4. Acceptance для Gate B Phase 1
+
+- [ ] `EMAIL_BACKEND=smtp`, `SMTP_HOST=smtp.timeweb.ru`, `SMTP_FROM=noreply@$DOMAIN_APP`.
+- [ ] `make prod-tw-ps` — api / worker / scheduler healthy.
+- [ ] `/auth/password-reset/request` → 204, в логах `email_sent backend=smtp`.
+- [ ] Письмо пришло на тестовый внешний ящик (не спам).
+- [ ] `docker compose logs api | grep -iE "SMTP_PASSWORD|pwd="` пусто
+      (секрет не утёк в логи).
+
+После выполнения — добавь строку в `docs/deploy/GATE_SIGNOFFS.md` → Gate B log
+с датой и commit SHA. Phase 2 (amoCRM OAuth + pull) можно запускать только
+после этой галочки.
+
+---
+
 ## 10. Troubleshooting (быстрые ответы, если что-то идёт не так)
 
 | Симптом | Причина / первое действие |
@@ -642,7 +759,8 @@ make prod-tw-restore BACKUP=$BACKUP
 
 ## 11. Что НЕ делать в рамках этого runbook'а
 
-- **CRM intergation, YooKassa/Stripe, SMTP** — Sprint 3/4, отложено.
+- **CRM integration (real amoCRM/Kommo), YooKassa/Stripe** — Gate B Phase 2 / Sprint 4, отложено.
+- **SMTP** — включается в Gate B Phase 1, см. §9a. В Gate A живёт console-backend.
 - **CSRF-tokens, rolling refresh, session table** — Sprint 1.
 - **Offsite backup (rclone + S3), GPG-шифрование, logrotate** — Sprint 2.
 - **Изменение схемы managed DB из панели Timeweb** — всё через alembic-миграции.

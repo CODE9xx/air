@@ -56,6 +56,17 @@ class Settings(BaseSettings):
 
     # Email
     dev_email_mode: str = Field(default="log", alias="DEV_EMAIL_MODE")
+    # console — в stdout/логи (dev).
+    # smtp    — реальная отправка (prod, Timeweb SMTP и пр.).
+    email_backend: str = Field(default="console", alias="EMAIL_BACKEND")
+    smtp_host: str = Field(default="", alias="SMTP_HOST")
+    smtp_port: int = Field(default=587, alias="SMTP_PORT")
+    smtp_user: str = Field(default="", alias="SMTP_USER")
+    smtp_password: str = Field(default="", alias="SMTP_PASSWORD")
+    smtp_from: str = Field(default="noreply@example.com", alias="SMTP_FROM")
+    # starttls (587) | ssl (465) | none (25, только dev/internal).
+    smtp_mode: str = Field(default="starttls", alias="SMTP_MODE")
+    smtp_timeout_seconds: int = Field(default=10, alias="SMTP_TIMEOUT_SECONDS")
 
     # Admin bootstrap
     admin_bootstrap_email: str = Field(
@@ -90,6 +101,20 @@ class Settings(BaseSettings):
                     raise ValueError(
                         f"{field_name.upper()} не переопределён — "
                         "запуск в production с публичным дефолтом запрещён."
+                    )
+
+            # Если email_backend=smtp, требуем хотя бы host+from. Пароль может
+            # отсутствовать у internal relay, но на Timeweb всегда есть.
+            if self.email_backend.lower() == "smtp":
+                if not self.smtp_host:
+                    raise ValueError(
+                        "EMAIL_BACKEND=smtp, но SMTP_HOST пустой — "
+                        "письма отправлять невозможно."
+                    )
+                if not self.smtp_from or "@" not in self.smtp_from:
+                    raise ValueError(
+                        "SMTP_FROM должен быть валидным e-mail "
+                        "(например, noreply@aicode9.ru)."
                     )
         return self
 
