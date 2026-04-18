@@ -51,7 +51,10 @@ services:
       - .env
     environment:
       APP_ENV: ${APP_ENV:-development}
-      PYTHONPATH: /app:/app/scripts
+      # Важно: PYTHONPATH должен включать /packages/ai/src и
+      # /packages/crm-connectors/src — иначе импорты crm_connectors / ai
+      # в dev не резолвятся (в prod compose это уже есть).
+      PYTHONPATH: /app:/app/scripts:/packages/ai/src:/packages/crm-connectors/src
     ports:
       - "8000:8000"
     volumes:
@@ -76,7 +79,8 @@ services:
       - .env
     environment:
       APP_ENV: ${APP_ENV:-development}
-      PYTHONPATH: /app:/app/scripts
+      # См. аналогичный комментарий в сервисе api.
+      PYTHONPATH: /app:/app/scripts:/packages/ai/src:/packages/crm-connectors/src
     volumes:
       - ./apps/worker:/app
       - ./packages:/packages
