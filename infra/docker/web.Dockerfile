@@ -23,6 +23,8 @@ CMD ["npm", "run", "dev"]
 # --- build: готовим production-артефакт ---
 FROM deps AS build
 COPY apps/web .
+# shared/typescript re-exported via apps/web/lib/types.ts ('../../../packages/shared/typescript')
+COPY packages/shared /packages/shared
 RUN npm run build
 
 # --- prod: минимальный рантайм ---
