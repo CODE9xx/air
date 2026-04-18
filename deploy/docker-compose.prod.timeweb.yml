@@ -92,7 +92,7 @@ services:
       - ../.env.production
     environment:
       APP_ENV: production
-      PYTHONPATH: /app:/app/scripts:/packages
+      PYTHONPATH: /app:/app/scripts:/packages/ai/src:/packages/crm-connectors/src
     expose:
       - "8000"
     volumes:
@@ -127,7 +127,7 @@ services:
       - ../.env.production
     environment:
       APP_ENV: production
-      PYTHONPATH: /app:/app/scripts:/packages
+      PYTHONPATH: /app:/app/scripts:/packages/ai/src:/packages/crm-connectors/src
     volumes:
       - ../packages:/packages:ro
       - ../scripts:/app/scripts:ro
@@ -152,7 +152,7 @@ services:
       - ../.env.production
     environment:
       APP_ENV: production
-      PYTHONPATH: /app:/app/scripts:/packages
+      PYTHONPATH: /app:/app/scripts:/packages/ai/src:/packages/crm-connectors/src
     volumes:
       - ../packages:/packages:ro
       - ../scripts:/app/scripts:ro
