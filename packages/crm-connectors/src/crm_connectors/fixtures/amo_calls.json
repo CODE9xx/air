@@ -1,0 +1,14 @@
+[
+  {"id": 80001, "deal_id": 10001, "contact_id": 3001, "user_id": 9002, "direction": "out", "phone": "+7 916 101-20-30", "duration": 245, "result": "answered",    "recording_url": "https://mock-amo.ru/calls/80001.mp3", "created_at": 1744329600},
+  {"id": 80002, "deal_id": 10001, "contact_id": 3001, "user_id": 9002, "direction": "in",  "phone": "+7 916 101-20-30", "duration": 312, "result": "answered",    "recording_url": "https://mock-amo.ru/calls/80002.mp3", "created_at": 1744416000},
+  {"id": 80003, "deal_id": 10002, "contact_id": 3002, "user_id": 9003, "direction": "out", "phone": "+7 921 102-20-31", "duration": 98,  "result": "answered",    "recording_url": "https://mock-amo.ru/calls/80003.mp3", "created_at": 1744502400},
+  {"id": 80004, "deal_id": 10004, "contact_id": 3004, "user_id": 9005, "direction": "out", "phone": "+7 916 104-20-33", "duration": 0,   "result": "no_answer",   "recording_url": null,                                   "created_at": 1744588800},
+  {"id": 80005, "deal_id": 10005, "contact_id": 3005, "user_id": 9006, "direction": "out", "phone": "+7 926 105-20-34", "duration": 410, "result": "answered",    "recording_url": "https://mock-amo.ru/calls/80005.mp3", "created_at": 1744675200},
+  {"id": 80006, "deal_id": 10009, "contact_id": 3009, "user_id": 9003, "direction": "in",  "phone": "+7 926 109-20-38", "duration": 182, "result": "answered",    "recording_url": "https://mock-amo.ru/calls/80006.mp3", "created_at": 1744761600},
+  {"id": 80007, "deal_id": 10010, "contact_id": 3010, "user_id": 9004, "direction": "out", "phone": "+7 921 110-20-39", "duration": 725, "result": "answered",    "recording_url": "https://mock-amo.ru/calls/80007.mp3", "created_at": 1744848000},
+  {"id": 80008, "deal_id": 10012, "contact_id": 3012, "user_id": 9006, "direction": "out", "phone": "+7 916 112-20-41", "duration": 55,  "result": "voicemail",   "recording_url": "https://mock-amo.ru/calls/80008.mp3", "created_at": 1744848000},
+  {"id": 80009, "deal_id": 10014, "contact_id": 3014, "user_id": 9008, "direction": "in",  "phone": "+7 916 114-20-43", "duration": 268, "result": "answered",    "recording_url": "https://mock-amo.ru/calls/80009.mp3", "created_at": 1744848000},
+  {"id": 80010,"deal_id": 10017, "contact_id": 3017, "user_id": 9010, "direction": "out", "phone": "+7 926 117-20-46", "duration": 0,   "result": "busy",        "recording_url": null,                                   "created_at": 1744848000},
+  {"id": 80011,"deal_id": 10018, "contact_id": 3018, "user_id": 9002, "direction": "out", "phone": "+7 925 118-20-47", "duration": 532, "result": "answered",    "recording_url": "https://mock-amo.ru/calls/80011.mp3", "created_at": 1744848000},
+  {"id": 80012,"deal_id": 10021, "contact_id": 3021, "user_id": 9005, "direction": "in",  "phone": "+7 905 121-20-50", "duration": 195, "result": "answered",    "recording_url": "https://mock-amo.ru/calls/80012.mp3", "created_at": 1744848000}
+]

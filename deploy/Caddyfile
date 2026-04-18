@@ -1,0 +1,97 @@
+# =============================================================================
+# Code9 Analytics — Caddy v2 configuration (production / staging)
+#
+# Замени перед запуском ВСЕ вхождения примеров:
+#   - app.example.com            — в site-блоке и CSP, если где-то появится
+#   - api.example.com            — в site-блоке И ВНУТРИ CSP connect-src для app.
+#                                  (легко пропустить: CSP спрятан в одной строке header-блока)
+#   - admin@example.com          — email для Let's Encrypt (ACME)
+#
+# Быстрая проверка, что не осталось example.com:
+#   grep -n "example\.com" deploy/Caddyfile    # должно быть пусто
+#
+# Caddy автоматически получит Let's Encrypt сертификаты, если DNS указывает
+# на сервер и порты 80/443 открыты.
+#
+# Edit:  deploy/Caddyfile
+# Reload:  docker compose -f deploy/docker-compose.prod.yml exec caddy caddy reload --config /etc/caddy/Caddyfile
+# =============================================================================
+
+{
+    # Глобальные опции
+    email admin@example.com
+    # для staging certs раскомментируй на время тестов:
+    # acme_ca https://acme-staging-v02.api.letsencrypt.org/directory
+}
+
+# --- Frontend: Next.js -----------------------------------------------------
+app.example.com {
+    encode zstd gzip
+
+    reverse_proxy web:3000 {
+        header_up X-Real-IP {remote_host}
+        header_up X-Forwarded-Proto https
+    }
+
+    # Security headers — применяются ко всему ответу
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        X-Frame-Options            "DENY"
+        X-Content-Type-Options     "nosniff"
+        Referrer-Policy            "strict-origin-when-cross-origin"
+        Permissions-Policy         "camera=(), microphone=(), geolocation=(), interest-cohort=()"
+        # CSP — стартовая (refine в Sprint 2 / P2 задача)
+        Content-Security-Policy    "default-src 'self'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; connect-src 'self' https://api.example.com; font-src 'self' data:; frame-ancestors 'none';"
+        # Убираем server-баннер
+        -Server
+    }
+
+    log {
+        output file /data/access-app.log {
+            roll_size     50mb
+            roll_keep     10
+            roll_keep_for 720h
+        }
+        format json
+    }
+}
+
+# --- Backend API: FastAPI --------------------------------------------------
+api.example.com {
+    encode zstd gzip
+
+    reverse_proxy api:8000 {
+        header_up X-Real-IP {remote_host}
+        header_up X-Forwarded-Proto https
+    }
+
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        X-Frame-Options            "DENY"
+        X-Content-Type-Options     "nosniff"
+        Referrer-Policy            "no-referrer"
+        # API не рендерит HTML — CSP минимальный
+        Content-Security-Policy    "default-src 'none'; frame-ancestors 'none';"
+        -Server
+    }
+
+    # Health endpoint без логов, чтобы не раздувать журнал
+    @health path /api/v1/health
+    handle @health {
+        reverse_proxy api:8000
+    }
+
+    log {
+        output file /data/access-api.log {
+            roll_size     50mb
+            roll_keep     10
+            roll_keep_for 720h
+        }
+        format json
+    }
+}
+
+# --- Редирект www → apex (опционально) -------------------------------------
+# www.app.example.com {
+#     redir https://app.example.com{uri} permanent
+# }

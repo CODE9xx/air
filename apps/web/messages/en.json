@@ -1,0 +1,409 @@
+{
+  "common": {
+    "brand": "Code9 Analytics",
+    "tagline": "CRM audit, exports and AI analytics",
+    "loading": "Loading",
+    "save": "Save",
+    "cancel": "Cancel",
+    "back": "Back",
+    "next": "Next",
+    "continue": "Continue",
+    "submit": "Submit",
+    "confirm": "Confirm",
+    "delete": "Delete",
+    "edit": "Edit",
+    "close": "Close",
+    "retry": "Retry",
+    "yes": "Yes",
+    "no": "No",
+    "copy": "Copy",
+    "copied": "Copied",
+    "search": "Search",
+    "language": "Language",
+    "russian": "Russian",
+    "english": "English",
+    "required": "Required",
+    "optional": "Optional",
+    "comingSoon": "Coming soon",
+    "empty": "Nothing here yet",
+    "error": "Error",
+    "success": "Success",
+    "learnMore": "Learn more"
+  },
+  "nav": {
+    "home": "Home",
+    "features": "Features",
+    "integrations": "Integrations",
+    "pricing": "Pricing",
+    "faq": "FAQ",
+    "login": "Log in",
+    "register": "Sign up",
+    "dashboard": "Dashboard",
+    "logout": "Log out"
+  },
+  "landing": {
+    "hero": {
+      "title": "CRM audit, exports and AI sales analytics",
+      "subtitle": "Connect amoCRM, Kommo or Bitrix24 in 2 minutes. We'll find funnel leaks, reveal manager performance and analyze calls with AI.",
+      "ctaPrimary": "Start free",
+      "ctaSecondary": "See demo"
+    },
+    "features": {
+      "title": "What you get",
+      "audit": {
+        "title": "Audit in 5 minutes",
+        "body": "We scan your CRM for 50+ common issues: duplicates, abandoned deals, missed tasks."
+      },
+      "dashboards": {
+        "title": "6 ready-made dashboards",
+        "body": "Funnel, sources, managers, calls, messages and overview — pre-configured for your CRM."
+      },
+      "export": {
+        "title": "Full data exports",
+        "body": "ZIP with CSV and JSON: deals, contacts, tasks, calls. Nothing is lost when migrating."
+      },
+      "ai": {
+        "title": "AI call analysis",
+        "body": "Conversation scoring by 20 criteria, behavior pattern extraction and client knowledge base."
+      }
+    },
+    "integrations": {
+      "title": "Integrations",
+      "subtitle": "One click and we're already reading your CRM in safe read-only mode.",
+      "amocrm": "amoCRM",
+      "kommo": "Kommo",
+      "bitrix24": "Bitrix24",
+      "yookassa": "YooKassa",
+      "stripe": "Stripe"
+    },
+    "pricing": {
+      "title": "Pay as you go",
+      "subtitle": "No subscriptions. Pay only for what you use: each audit, export and AI analysis has a fixed price.",
+      "auditPrice": "Audit — from $39",
+      "exportPrice": "Export — from $79",
+      "aiPrice": "AI call analysis — $0.59",
+      "ctaDeposit": "Top up balance"
+    },
+    "faq": {
+      "title": "Frequently asked",
+      "q1": "Is this safe?",
+      "a1": "We never store your passwords. Connection is via official OAuth of your CRM. Tokens are encrypted, data is in an isolated DB schema.",
+      "q2": "Do I need to install anything?",
+      "a2": "No. Everything runs in your browser. You see metrics without extensions, scripts or SDKs.",
+      "q3": "Can I delete all my data?",
+      "a3": "Yes. One click: request deletion, confirm with email code — we wipe everything in 24 hours."
+    },
+    "cta": {
+      "title": "Connect your first CRM in 2 minutes",
+      "subtitle": "Sign-up is free. First audit starts at $39.",
+      "button": "Sign up"
+    }
+  },
+  "auth": {
+    "register": {
+      "title": "Create account",
+      "subtitle": "Get access to Code9 Analytics in 30 seconds",
+      "email": "Email",
+      "password": "Password",
+      "passwordHint": "At least 8 characters",
+      "submit": "Create account",
+      "alreadyHaveAccount": "Already have an account?",
+      "loginLink": "Log in",
+      "agreeTerms": "I accept the Terms of Service and Privacy Policy"
+    },
+    "verifyEmail": {
+      "title": "Verify your email",
+      "subtitle": "We sent a 6-digit code to {email}",
+      "code": "Code from email",
+      "submit": "Verify",
+      "resend": "Resend code",
+      "resent": "Code resent"
+    },
+    "login": {
+      "title": "Log in",
+      "subtitle": "Sign in to your Code9 Analytics account",
+      "email": "Email",
+      "password": "Password",
+      "submit": "Log in",
+      "forgotPassword": "Forgot password?",
+      "noAccount": "No account yet?",
+      "registerLink": "Sign up"
+    },
+    "forgotPassword": {
+      "title": "Reset password",
+      "subtitle": "Enter your email — we'll send a reset code",
+      "email": "Email",
+      "submit": "Send code",
+      "sent": "If the email exists, a reset code has been sent",
+      "backToLogin": "Back to login"
+    },
+    "resetPassword": {
+      "title": "New password",
+      "subtitle": "Enter the code from email and your new password",
+      "email": "Email",
+      "code": "Code from email",
+      "newPassword": "New password",
+      "submit": "Save password",
+      "success": "Password updated. Sign in with the new one."
+    },
+    "errors": {
+      "invalidEmail": "Invalid email",
+      "passwordTooShort": "Password must be at least 8 characters",
+      "passwordMismatch": "Passwords don't match",
+      "invalidCredentials": "Invalid email or password",
+      "emailNotVerified": "Email not verified",
+      "emailTaken": "This email is already in use",
+      "codeExpired": "Code expired. Request a new one",
+      "tooManyAttempts": "Too many attempts, try again later",
+      "rateLimited": "Too many requests. Please wait",
+      "codeLength": "Code must contain 6 digits",
+      "generic": "Something went wrong. Please try again"
+    }
+  },
+  "cabinet": {
+    "sidebar": {
+      "dashboard": "Overview",
+      "connections": "Connections",
+      "notifications": "Notifications",
+      "ai": "AI analytics",
+      "knowledgeBase": "Knowledge base",
+      "settings": "Settings"
+    },
+    "topbar": {
+      "workspace": "Workspace",
+      "userMenu": "User menu",
+      "profile": "Profile",
+      "logout": "Log out"
+    },
+    "dashboard": {
+      "title": "Welcome",
+      "subtitle": "Overview of your account and connections",
+      "gettingStarted": "Getting started",
+      "step1": "Connect your CRM",
+      "step1Body": "amoCRM, Kommo or Bitrix24 — one click via OAuth",
+      "step2": "Run an audit",
+      "step2Body": "We check your CRM for common issues and funnel leaks",
+      "step3": "View dashboards",
+      "step3Body": "6 ready dashboards show funnel, sources, managers and calls",
+      "activeConnections": "Active connections",
+      "totalAudits": "Total audits",
+      "totalCalls": "Calls analyzed"
+    },
+    "connections": {
+      "title": "CRM connections",
+      "subtitle": "All your connections in one place",
+      "addNew": "Connect CRM",
+      "addFirst": "Connect your first CRM",
+      "emptyTitle": "No connections yet",
+      "emptyBody": "Start by connecting amoCRM — it takes 2 minutes",
+      "connectAmoCRM": "Connect amoCRM (mock)",
+      "chooseProvider": "Choose a CRM",
+      "provider": "Provider",
+      "domain": "Domain",
+      "status": "Status",
+      "lastSync": "Last sync",
+      "tokenExpires": "Token valid until",
+      "statusActive": "Active",
+      "statusPending": "Pending",
+      "statusPaused": "Paused",
+      "statusFailed": "Failed",
+      "statusDeleting": "Deleting",
+      "statusDeleted": "Deleted",
+      "actions": {
+        "runAudit": "Run audit",
+        "trialExport": "Trial export of 100 deals",
+        "pause": "Pause",
+        "resume": "Resume",
+        "delete": "Delete data",
+        "viewDashboard": "Dashboard",
+        "billing": "Billing",
+        "settings": "Settings",
+        "auditPage": "Audit"
+      },
+      "detail": {
+        "title": "Connection",
+        "overviewTab": "Overview",
+        "createdAt": "Created"
+      },
+      "new": {
+        "title": "New connection",
+        "subtitle": "Choose the CRM you want to connect",
+        "amocrm": "amoCRM",
+        "amocrmDesc": "Official OAuth, data stays read-only",
+        "kommoDesc": "Connector coming soon",
+        "bitrixDesc": "Connector coming soon",
+        "connectMock": "Connect mock amoCRM",
+        "mockNote": "MVP uses mock mode; real OAuth ships in V1"
+      },
+      "delete": {
+        "title": "Delete data",
+        "subtitle": "This action is irreversible. We will wipe all data linked to this connection.",
+        "warning": "This removes all exports, audits, AI analyses and the tenant DB schema. Your billing balance is preserved.",
+        "requestCode": "Request confirmation code",
+        "codeSent": "Code sent to the owner's email",
+        "enterCode": "Enter 6-digit code",
+        "confirm": "Delete permanently"
+      }
+    },
+    "audit": {
+      "title": "CRM audit",
+      "subtitle": "We scan your CRM for issues and funnel leaks",
+      "run": "Run audit",
+      "running": "Audit running...",
+      "ready": "Audit ready",
+      "empty": "Run your first audit to see the report",
+      "deals": "Deals",
+      "contacts": "Contacts",
+      "tasks": "Tasks",
+      "calls": "Calls",
+      "pipelines": "Pipelines",
+      "users": "Users",
+      "dataRange": "Data range, days",
+      "storage": "Storage, MB",
+      "estimateTitle": "Export estimate",
+      "estimateTime": "Estimated time",
+      "estimatePrice": "Price",
+      "minutes": "min"
+    },
+    "dashboard_page": {
+      "title": "Dashboards",
+      "overview": "Overview",
+      "funnel": "Funnel",
+      "sources": "Sources",
+      "managers": "Managers",
+      "calls": "Calls",
+      "messages": "Messages",
+      "noData": "No data yet. Run a sync first.",
+      "stage": "Stage",
+      "deals": "Deals",
+      "conversion": "Conversion",
+      "dealsOpen": "Open",
+      "dealsWon": "Won"
+    },
+    "billing": {
+      "title": "Billing",
+      "balance": "Balance",
+      "plan": "Plan",
+      "topUp": "Top up",
+      "history": "Transactions",
+      "amount": "Amount",
+      "description": "Description",
+      "date": "Date",
+      "deposit": "Deposit",
+      "charge": "Charge",
+      "refund": "Refund",
+      "adjustment": "Adjustment"
+    },
+    "settings": {
+      "title": "Settings",
+      "profile": "Profile",
+      "displayName": "Display name",
+      "email": "Email",
+      "locale": "Interface language",
+      "workspace": "Workspace",
+      "workspaceName": "Name",
+      "dangerZone": "Danger zone",
+      "deleteAccount": "Delete account"
+    },
+    "notifications": {
+      "title": "Notifications",
+      "empty": "No notifications",
+      "markRead": "Mark as read",
+      "allRead": "All read"
+    },
+    "ai": {
+      "title": "AI analytics",
+      "subtitle": "Conversation scoring, behavior patterns, knowledge base",
+      "consentRequired": "To start, please accept the AI processing terms",
+      "accept": "Accept",
+      "empty": "Run a call analysis to see results"
+    },
+    "knowledgeBase": {
+      "title": "Client knowledge base",
+      "subtitle": "Facts automatically extracted from calls and messages",
+      "addManual": "Add manually",
+      "empty": "Knowledge base is empty"
+    }
+  },
+  "admin": {
+    "login": {
+      "title": "Admin panel",
+      "subtitle": "Staff only",
+      "email": "Email",
+      "password": "Password",
+      "submit": "Log in"
+    },
+    "sidebar": {
+      "metrics": "Metrics",
+      "workspaces": "Workspaces",
+      "users": "Users",
+      "connections": "Connections",
+      "jobs": "Jobs",
+      "billing": "Billing",
+      "auditLogs": "Audit logs",
+      "aiResearch": "AI research"
+    },
+    "metrics": {
+      "title": "Metrics",
+      "totalWorkspaces": "Total workspaces",
+      "activeConnections": "Active connections",
+      "totalRevenue": "Revenue",
+      "jobsToday": "Jobs today"
+    },
+    "workspaces": {
+      "title": "Workspaces",
+      "name": "Name",
+      "slug": "Slug",
+      "status": "Status",
+      "plan": "Plan",
+      "connections": "Connections",
+      "pause": "Pause",
+      "resume": "Resume"
+    },
+    "users": {
+      "title": "Users",
+      "email": "Email",
+      "name": "Name",
+      "createdAt": "Created"
+    },
+    "connections": {
+      "title": "Connections",
+      "provider": "Provider",
+      "status": "Status",
+      "workspace": "Workspace"
+    },
+    "jobs": {
+      "title": "Jobs",
+      "kind": "Kind",
+      "status": "Status",
+      "startedAt": "Started",
+      "finishedAt": "Finished",
+      "restart": "Restart"
+    },
+    "billing": {
+      "title": "Billing",
+      "totalBalance": "Total balance"
+    },
+    "auditLogs": {
+      "title": "Audit logs",
+      "action": "Action",
+      "admin": "Admin",
+      "target": "Target",
+      "createdAt": "Date"
+    },
+    "aiResearch": {
+      "title": "AI research patterns",
+      "empty": "No patterns yet"
+    },
+    "logout": "Log out"
+  },
+  "footer": {
+    "product": "Product",
+    "company": "Company",
+    "legal": "Legal",
+    "terms": "Terms of Service",
+    "privacy": "Privacy Policy",
+    "dpa": "Data Processing Agreement",
+    "copyright": "© {year} Code9 Analytics. All rights reserved."
+  }
+}

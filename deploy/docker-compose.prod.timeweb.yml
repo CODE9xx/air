@@ -1,0 +1,191 @@
+# =============================================================================
+# Code9 Analytics — production compose для Timeweb (VPS + managed Postgres)
+#
+# Отличия от docker-compose.prod.yml:
+#   - НЕТ сервиса postgres. БД живёт на Timeweb managed Postgres (private IP).
+#   - api / worker / scheduler подключаются к внешней БД через DATABASE_URL / POSTGRES_DSN.
+#   - depends_on для api/worker/scheduler → только redis (internal).
+#   - Миграции / extensions применяются вручную из api-контейнера (есть alembic + psql).
+#
+# Перед первым запуском:
+#   cp .env.production.template .env.production
+#   nano .env.production      # заполнить CHANGE_ME_* + DATABASE_URL на managed host
+#   chmod 600 .env.production
+#   make prod-tw-config
+#   make prod-tw-build
+#   make prod-tw-up
+#   make prod-tw-db-extensions   # одноразово — CREATE EXTENSION в managed БД
+#   make prod-tw-migrate
+#   make prod-tw-seed
+#   make prod-tw-smoke
+#
+# Документация: docs/deploy/INSTALL_TIMEWEB.md
+# =============================================================================
+
+name: code9-prod-tw
+
+services:
+  # --- Reverse proxy: HTTPS, security headers, автоматический Let's Encrypt ---
+  caddy:
+    image: caddy:2-alpine
+    container_name: code9-prod-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"    # HTTP/3
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      web:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    networks:
+      - code9-prod-tw
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:2019/config/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # --- Frontend: Next.js production build ---
+  web:
+    build:
+      context: ..
+      dockerfile: infra/docker/web.Dockerfile
+      target: prod
+    container_name: code9-prod-web
+    restart: unless-stopped
+    env_file:
+      - ../.env.production
+    environment:
+      NODE_ENV: production
+    expose:
+      - "3000"
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - code9-prod-tw
+    healthcheck:
+      # Node-based fetch; 127.0.0.1 избегает IPv4/IPv6-неоднозначности;
+      # status < 500 пропускает 3xx/4xx (редиректы на /ru, auth-страницы).
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/').then(r=>process.exit(r.status<500?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # --- Backend API: FastAPI ---
+  # БД — Timeweb managed Postgres через DATABASE_URL (private IP, sslmode=require).
+  api:
+    build:
+      context: ..
+      dockerfile: infra/docker/api.Dockerfile
+      target: prod
+    container_name: code9-prod-api
+    restart: unless-stopped
+    env_file:
+      - ../.env.production
+    environment:
+      APP_ENV: production
+      PYTHONPATH: /app:/app/scripts:/packages
+    expose:
+      - "8000"
+    volumes:
+      - ../packages:/packages:ro
+      - ../scripts:/app/scripts:ro
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - code9-prod-tw
+    extra_hosts:
+      # Если Timeweb managed DB резолвится только изнутри приватной сети —
+      # не нужно. Блок оставлен как подсказка для ручного hosts-override.
+      # - "db.timeweb.internal:192.168.0.4"
+      []
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  # --- RQ worker: очереди crm/export/audit/ai/retention/billing ---
+  worker:
+    build:
+      context: ..
+      dockerfile: infra/docker/worker.Dockerfile
+      target: prod
+    container_name: code9-prod-worker
+    restart: unless-stopped
+    env_file:
+      - ../.env.production
+    environment:
+      APP_ENV: production
+      PYTHONPATH: /app:/app/scripts:/packages
+    volumes:
+      - ../packages:/packages:ro
+      - ../scripts:/app/scripts:ro
+    depends_on:
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_started
+    networks:
+      - code9-prod-tw
+    command: ["python", "-m", "worker.main"]
+
+  # --- Scheduler: daily retention/billing jobs ---
+  scheduler:
+    build:
+      context: ..
+      dockerfile: infra/docker/worker.Dockerfile
+      target: prod
+    container_name: code9-prod-scheduler
+    restart: unless-stopped
+    env_file:
+      - ../.env.production
+    environment:
+      APP_ENV: production
+      PYTHONPATH: /app:/app/scripts:/packages
+    volumes:
+      - ../packages:/packages:ro
+      - ../scripts:/app/scripts:ro
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - code9-prod-tw
+    command: ["python", "-m", "worker.scheduler"]
+
+  # --- Redis: bind на 127.0.0.1 → снаружи недоступен ---
+  redis:
+    image: redis:7-alpine
+    container_name: code9-prod-redis
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - redis-prod-data:/data
+    networks:
+      - code9-prod-tw
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "allkeys-lru"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
+networks:
+  code9-prod-tw:
+    driver: bridge
+
+volumes:
+  redis-prod-data:
+  caddy-data:
+  caddy-config:

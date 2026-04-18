@@ -1,0 +1,221 @@
+# =============================================================================
+# Code9 Analytics — production-like docker compose (staging / closed pilot)
+#
+# Назначение: одна VPS, Caddy HTTPS, изолированный Postgres/Redis (127.0.0.1),
+# prod-сборки frontend/api/worker/scheduler.
+#
+# НЕ ДЛЯ публичного production c реальными платежами/CRM до прохождения Gate C
+# (см. docs/deploy/PRODUCTION_CHECKLIST.md).
+#
+# Запуск:
+#   cp .env.production.template .env.production
+#   nano .env.production           # заполнить все CHANGE_ME
+#   chmod 600 .env.production
+#   make prod-build
+#   make prod-up
+#   make prod-migrate
+#   make prod-smoke
+# =============================================================================
+
+name: code9-prod
+
+services:
+  # --- Reverse proxy: HTTPS, security headers, автоматический Let's Encrypt ---
+  caddy:
+    image: caddy:2-alpine
+    container_name: code9-prod-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"    # HTTP/3
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      web:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    networks:
+      - code9-prod
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:2019/config/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # --- Frontend: Next.js production build ---
+  web:
+    build:
+      context: ..
+      dockerfile: infra/docker/web.Dockerfile
+      target: prod
+    container_name: code9-prod-web
+    restart: unless-stopped
+    env_file:
+      - ../.env.production
+    environment:
+      NODE_ENV: production
+    expose:
+      - "3000"
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - code9-prod
+    healthcheck:
+      # Node-based: fetch глобально доступен в Node 20+, не зависит от наличия wget/curl.
+      # BusyBox wget в node:alpine поддерживает -q/-T, но GNU long-flags (--tries/--timeout)
+      # могут падать в зависимости от сборки — node -e гарантированно работает.
+      #   - 127.0.0.1 вместо localhost: обходим IPv4/IPv6-неоднозначность (Node иногда
+      #     резолвит localhost в ::1, а сервер слушает только 0.0.0.0).
+      #   - status < 500: подтверждает, что Next.js жив, даже если / отдаёт 3xx/4xx
+      #     (редиректы на /ru или auth-страницы не должны валить healthcheck).
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/').then(r=>process.exit(r.status<500?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # --- Backend API: FastAPI (uvicorn --workers 2) ---
+  api:
+    build:
+      context: ..
+      dockerfile: infra/docker/api.Dockerfile
+      target: prod
+    container_name: code9-prod-api
+    restart: unless-stopped
+    env_file:
+      - ../.env.production
+    environment:
+      APP_ENV: production
+      PYTHONPATH: /app:/app/scripts:/packages
+    expose:
+      - "8000"
+    # packages/scripts монтируются read-only — prod Dockerfile не копирует их
+    # (TODO sprint 1: перенести COPY в Dockerfile для полной изоляции образа)
+    volumes:
+      - ../packages:/packages:ro
+      - ../scripts:/app/scripts:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - code9-prod
+    healthcheck:
+      # curl установлен в infra/docker/api.Dockerfile (base stage) — наличие гарантировано.
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  # --- RQ worker: обрабатывает 6 очередей (crm/export/audit/ai/retention/billing) ---
+  worker:
+    build:
+      context: ..
+      dockerfile: infra/docker/worker.Dockerfile
+      target: prod
+    container_name: code9-prod-worker
+    restart: unless-stopped
+    env_file:
+      - ../.env.production
+    environment:
+      APP_ENV: production
+      PYTHONPATH: /app:/app/scripts:/packages
+    volumes:
+      - ../packages:/packages:ro
+      - ../scripts:/app/scripts:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_started
+    networks:
+      - code9-prod
+    command: ["python", "-m", "worker.main"]
+
+  # --- Scheduler: daily retention/billing jobs (rq-scheduler или MVP-loop) ---
+  scheduler:
+    build:
+      context: ..
+      dockerfile: infra/docker/worker.Dockerfile
+      target: prod
+    container_name: code9-prod-scheduler
+    restart: unless-stopped
+    env_file:
+      - ../.env.production
+    environment:
+      APP_ENV: production
+      PYTHONPATH: /app:/app/scripts:/packages
+    volumes:
+      - ../packages:/packages:ro
+      - ../scripts:/app/scripts:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - code9-prod
+    command: ["python", "-m", "worker.scheduler"]
+
+  # --- PostgreSQL: bind на 127.0.0.1 → снаружи недоступен ---
+  postgres:
+    image: postgres:18-alpine
+    container_name: code9-prod-postgres
+    restart: unless-stopped
+    # env_file грузит POSTGRES_USER/PASSWORD/DB непосредственно в окружение контейнера.
+    # Дублирующий environment: с ${VAR} убран — он зависел от compose-time interpolation,
+    # которая работает только при вызове с --env-file (Makefile это делает, но прямой
+    # `docker compose ... up` без флага давал пустые значения и ломал init/healthcheck).
+    env_file:
+      - ../.env.production
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres-prod-data:/var/lib/postgresql/data
+      - ../infra/postgres/init.sql:/docker-entrypoint-initdb.d/00-init.sql:ro
+    networks:
+      - code9-prod
+    healthcheck:
+      # $$POSTGRES_USER / $$POSTGRES_DB — экранировка для compose: literals в YAML,
+      # раскрываются внутри контейнера через bash из окружения (загружено env_file).
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # --- Redis: bind на 127.0.0.1 → снаружи недоступен ---
+  redis:
+    image: redis:7-alpine
+    container_name: code9-prod-redis
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - redis-prod-data:/data
+    networks:
+      - code9-prod
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "allkeys-lru"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
+networks:
+  code9-prod:
+    driver: bridge
+
+volumes:
+  postgres-prod-data:
+  redis-prod-data:
+  caddy-data:
+  caddy-config:

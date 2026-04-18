@@ -1,0 +1,52 @@
+[
+  {
+    "id": 5001,
+    "name": "ООО «ТехноЛоджик»",
+    "inn": "7701234567",
+    "phone": "+7 495 111-22-33",
+    "website": "https://technologic-mock.ru",
+    "responsible_user_id": 9002,
+    "created_at": 1704105600,
+    "updated_at": 1742745600
+  },
+  {
+    "id": 5002,
+    "name": "АО «Ритейл-Плюс»",
+    "inn": "7812345678",
+    "phone": "+7 812 222-33-44",
+    "website": "https://retail-plus-mock.ru",
+    "responsible_user_id": 9003,
+    "created_at": 1710288000,
+    "updated_at": 1744243200
+  },
+  {
+    "id": 5003,
+    "name": "ИП Карпов К.В.",
+    "inn": "503212345678",
+    "phone": "+7 925 333-44-55",
+    "website": null,
+    "responsible_user_id": 9004,
+    "created_at": 1714867200,
+    "updated_at": 1743897600
+  },
+  {
+    "id": 5004,
+    "name": "ООО «СтройМонтаж-М»",
+    "inn": "5031234567",
+    "phone": "+7 495 444-55-66",
+    "website": "https://stroymontazh-mock.ru",
+    "responsible_user_id": 9005,
+    "created_at": 1717545600,
+    "updated_at": 1744675200
+  },
+  {
+    "id": 5005,
+    "name": "ООО «Логистика 24/7»",
+    "inn": "7723456789",
+    "phone": "+7 499 555-66-77",
+    "website": "https://logistics247-mock.ru",
+    "responsible_user_id": 9006,
+    "created_at": 1720137600,
+    "updated_at": 1744070400
+  }
+]
