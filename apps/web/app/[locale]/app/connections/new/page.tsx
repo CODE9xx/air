@@ -5,26 +5,74 @@ import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
-import { api } from '@/lib/api';
-import type { CrmConnection } from '@/lib/types';
+import { api, ApiError } from '@/lib/api';
+import type { AmoOAuthStartResponse, CrmConnection } from '@/lib/types';
 import { useToast } from '@/components/ui/Toast';
+import { useUserAuth } from '@/components/providers/AuthProvider';
 
+/**
+ * Страница «Новое подключение».
+ *
+ * Два режима подключения amoCRM:
+ *   — real OAuth (Phase 2A): `GET /integrations/amocrm/oauth/start?workspace_id`
+ *     → редирект на amoCRM. Если сервер отвечает 501 (mock-только), показываем
+ *     toast и оставляем пользователя на странице.
+ *   — mock (legacy): `POST /crm/connections/mock-amocrm`. Остаётся для demo/dev
+ *     стенда; в prod (`MOCK_CRM_MODE=false`) ручка не скрыта, но работает как
+ *     запрос к реальному OAuth через BE.
+ */
 export default function NewConnectionPage() {
   const t = useTranslations('cabinet.connections.new');
   const tCommon = useTranslations('common');
   const locale = useLocale();
   const router = useRouter();
   const { toast } = useToast();
-  const [loading, setLoading] = useState(false);
+  const { user } = useUserAuth();
+  const wsId = user?.workspaces?.[0]?.id ?? 'ws-demo-1';
+
+  const [loadingOAuth, setLoadingOAuth] = useState(false);
+  const [loadingMock, setLoadingMock] = useState(false);
+
+  const connectOAuth = async () => {
+    setLoadingOAuth(true);
+    try {
+      const res = await api.get<AmoOAuthStartResponse>(
+        '/integrations/amocrm/oauth/start',
+        { query: { workspace_id: wsId } },
+      );
+      // Mock-режим: BE уже создал active подключение, идём сразу в карточку.
+      if (res.mock && res.redirect_url) {
+        router.push(res.redirect_url);
+        return;
+      }
+      // Real: редирект на amoCRM consent-screen.
+      if (res.authorize_url) {
+        window.location.assign(res.authorize_url);
+        return;
+      }
+      toast({ kind: 'error', title: tCommon('error') });
+      setLoadingOAuth(false);
+    } catch (err) {
+      const msg =
+        err instanceof ApiError && err.message
+          ? err.message
+          : t('oauthError');
+      toast({ kind: 'error', title: msg });
+      setLoadingOAuth(false);
+    }
+  };
 
   const connectMock = async () => {
-    setLoading(true);
+    setLoadingMock(true);
     try {
-      const res = await api.post<CrmConnection>('/crm/connections/mock-amocrm');
+      const res = await api.post<CrmConnection>(
+        '/crm/connections/mock-amocrm',
+        { name: 'amoCRM (mock)' },
+      );
       router.push(`/${locale}/app/connections/${res.id}`);
     } catch {
       toast({ kind: 'error', title: tCommon('error') });
-      setLoading(false);
+      setLoadingMock(false);
     }
   };
 
@@ -41,10 +89,21 @@ export default function NewConnectionPage() {
             am
           </div>
           <h3 className="mt-3 font-semibold">{t('amocrm')}</h3>
-          <p className="text-xs text-muted-foreground mt-1 flex-1">{t('amocrmDesc')}</p>
-          <Button onClick={connectMock} loading={loading} className="mt-4">
-            {t('connectMock')}
-          </Button>
+          <p className="text-xs text-muted-foreground mt-1 flex-1">
+            {t('amocrmDesc')}
+          </p>
+          <div className="mt-4 flex flex-col gap-2">
+            <Button onClick={connectOAuth} loading={loadingOAuth}>
+              {t('connectOAuth')}
+            </Button>
+            <Button
+              variant="secondary"
+              onClick={connectMock}
+              loading={loadingMock}
+            >
+              {t('connectMock')}
+            </Button>
+          </div>
         </div>
 
         <div className="card p-5 opacity-80">
@@ -53,7 +112,9 @@ export default function NewConnectionPage() {
           </div>
           <h3 className="mt-3 font-semibold">Kommo</h3>
           <p className="text-xs text-muted-foreground mt-1">{t('kommoDesc')}</p>
-          <Badge tone="neutral" className="mt-4">{tCommon('comingSoon')}</Badge>
+          <Badge tone="neutral" className="mt-4">
+            {tCommon('comingSoon')}
+          </Badge>
         </div>
 
         <div className="card p-5 opacity-80">
@@ -61,12 +122,16 @@ export default function NewConnectionPage() {
             bx
           </div>
           <h3 className="mt-3 font-semibold">Bitrix24</h3>
-          <p className="text-xs text-muted-foreground mt-1">{t('bitrixDesc')}</p>
-          <Badge tone="neutral" className="mt-4">{tCommon('comingSoon')}</Badge>
+          <p className="text-xs text-muted-foreground mt-1">
+            {t('bitrixDesc')}
+          </p>
+          <Badge tone="neutral" className="mt-4">
+            {tCommon('comingSoon')}
+          </Badge>
         </div>
       </div>
 
-      <p className="text-xs text-muted-foreground">{t('mockNote')}</p>
+      <p className="text-xs text-muted-foreground">{t('oauthNote')}</p>
     </div>
   );
 }

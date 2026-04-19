@@ -1,7 +1,8 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useLocale, useTranslations } from 'next-intl';
 import { api } from '@/lib/api';
 import type { CrmConnection } from '@/lib/types';
@@ -9,14 +10,32 @@ import { useUserAuth } from '@/components/providers/AuthProvider';
 import { ConnectionCard } from '@/components/cabinet/ConnectionCard';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { useToast } from '@/components/ui/Toast';
+
+/**
+ * Флаги OAuth-колбэка, которые может присылать backend.
+ * См. apps/api/app/crm/oauth_router.py → `_ui_redirect(...)`.
+ */
+type OAuthFlash =
+  | 'amocrm_connected'
+  | 'amocrm_bad_referer'
+  | 'amocrm_invalid_grant'
+  | 'amocrm_exchange_failed'
+  | 'amocrm_cancelled'
+  | 'mock_oauth_ok';
 
 export default function ConnectionsPage() {
   const t = useTranslations('cabinet.connections');
+  const tFlash = useTranslations('cabinet.connections.flash');
   const locale = useLocale();
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const { user } = useUserAuth();
+  const { toast } = useToast();
   const wsId = user?.workspaces?.[0]?.id ?? 'ws-demo-1';
 
   const [conns, setConns] = useState<CrmConnection[] | null>(null);
+  const flashShown = useRef(false);
 
   useEffect(() => {
     (async () => {
@@ -28,6 +47,31 @@ export default function ConnectionsPage() {
       }
     })();
   }, [wsId]);
+
+  // Показываем toast по OAuth-флагу и чистим query-string, чтобы не дублировался
+  // при hot-reload / навигации назад.
+  useEffect(() => {
+    if (flashShown.current) return;
+    const flash = searchParams?.get('flash') as OAuthFlash | null;
+    if (!flash) return;
+    flashShown.current = true;
+    const flashToKind: Record<OAuthFlash, 'success' | 'error' | 'info'> = {
+      amocrm_connected: 'success',
+      mock_oauth_ok: 'success',
+      amocrm_cancelled: 'info',
+      amocrm_bad_referer: 'error',
+      amocrm_invalid_grant: 'error',
+      amocrm_exchange_failed: 'error',
+    };
+    toast({
+      kind: flashToKind[flash] ?? 'info',
+      title: tFlash(flash),
+    });
+    // cleanup: убираем ?flash=... из URL
+    const url = new URL(window.location.href);
+    url.searchParams.delete('flash');
+    router.replace(url.pathname + (url.search ? url.search : ''));
+  }, [searchParams, toast, tFlash, router]);
 
   return (
     <div className="space-y-6">

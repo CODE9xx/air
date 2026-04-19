@@ -39,15 +39,55 @@ export type CrmConnectionStatus =
   | 'deleting'
   | 'deleted';
 
+export interface AmoAccountMeta {
+  id?: number | string | null;
+  name?: string | null;
+  subdomain?: string | null;
+  country?: string | null;
+  currency?: string | null;
+}
+
+export interface CrmConnectionMetadata {
+  mock?: boolean;
+  source?: string;
+  amo_account?: AmoAccountMeta;
+  last_pull_at?: string | null;
+  last_pull_counts?: {
+    pipelines?: number;
+    stages?: number;
+    users?: number;
+    contacts?: number;
+    deals?: number;
+  };
+  [key: string]: unknown;
+}
+
 export interface CrmConnection {
   id: string;
+  workspace_id?: string;
+  name?: string;
   provider: CrmProvider;
   status: CrmConnectionStatus;
   external_account_id?: string;
   external_domain?: string;
+  tenant_schema?: string | null;
   last_sync_at?: string | null;
   token_expires_at?: string | null;
+  last_error?: string | null;
+  metadata?: CrmConnectionMetadata;
   created_at?: string;
+}
+
+/**
+ * Payload возвращаемый `GET /integrations/amocrm/oauth/start`.
+ * В MOCK-режиме — `mock: true, redirect_url`; в реальном — `authorize_url + state`.
+ */
+export interface AmoOAuthStartResponse {
+  mock: boolean;
+  connection_id: string;
+  authorize_url?: string;
+  state?: string;
+  redirect_url?: string;
 }
 
 export type JobStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';

@@ -54,6 +54,13 @@ class Settings(BaseSettings):
     # CRM
     mock_crm_mode: bool = Field(default=True, alias="MOCK_CRM_MODE")
 
+    # amoCRM OAuth (используется только при MOCK_CRM_MODE=false)
+    # Регистрация интеграции: amoCRM → Настройки → Интеграции → «+» → OAuth 2.0.
+    # Redirect URI должен совпадать точно с тем, что в панели amoCRM.
+    amocrm_client_id: str = Field(default="", alias="AMOCRM_CLIENT_ID")
+    amocrm_client_secret: str = Field(default="", alias="AMOCRM_CLIENT_SECRET")
+    amocrm_redirect_uri: str = Field(default="", alias="AMOCRM_REDIRECT_URI")
+
     # Email
     dev_email_mode: str = Field(default="log", alias="DEV_EMAIL_MODE")
     # console — в stdout/логи (dev).
@@ -115,6 +122,29 @@ class Settings(BaseSettings):
                     raise ValueError(
                         "SMTP_FROM должен быть валидным e-mail "
                         "(например, noreply@aicode9.ru)."
+                    )
+
+            # Real-CRM mode (MOCK_CRM_MODE=false) в проде требует
+            # AMOCRM_CLIENT_ID / AMOCRM_CLIENT_SECRET / AMOCRM_REDIRECT_URI.
+            # Без них OAuth-start и callback физически не отработают.
+            if not self.mock_crm_mode:
+                _amo_required = {
+                    "AMOCRM_CLIENT_ID": self.amocrm_client_id,
+                    "AMOCRM_CLIENT_SECRET": self.amocrm_client_secret,
+                    "AMOCRM_REDIRECT_URI": self.amocrm_redirect_uri,
+                }
+                _missing = [k for k, v in _amo_required.items() if not v]
+                if _missing:
+                    raise ValueError(
+                        "MOCK_CRM_MODE=false, но не заполнены: "
+                        + ", ".join(_missing)
+                        + ". Заполни .env.production перед перезапуском либо "
+                        "временно выставь MOCK_CRM_MODE=true."
+                    )
+                if not self.amocrm_redirect_uri.startswith("https://"):
+                    raise ValueError(
+                        "AMOCRM_REDIRECT_URI должен начинаться с https:// "
+                        "(amoCRM не принимает http в prod)."
                     )
         return self
 

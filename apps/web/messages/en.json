@@ -203,6 +203,10 @@
       "status": "Status",
       "lastSync": "Last sync",
       "tokenExpires": "Token valid until",
+      "tokenSoon": "Token expires soon",
+      "tokenExpired": "Token expired",
+      "mockBadge": "mock",
+      "lastError": "Last error",
       "statusActive": "Active",
       "statusPending": "Pending",
       "statusPaused": "Paused",
@@ -220,10 +224,31 @@
         "settings": "Settings",
         "auditPage": "Audit"
       },
+      "flash": {
+        "amocrm_connected": "amoCRM connected — initial sync started",
+        "mock_oauth_ok": "Mock amoCRM connection created",
+        "amocrm_cancelled": "You cancelled the amoCRM connection",
+        "amocrm_bad_referer": "amoCRM did not return an account subdomain. Please try again",
+        "amocrm_invalid_grant": "amoCRM authorization code was rejected. Please try again",
+        "amocrm_exchange_failed": "Failed to exchange amoCRM code for a token. Please retry"
+      },
       "detail": {
         "title": "Connection",
         "overviewTab": "Overview",
-        "createdAt": "Created"
+        "createdAt": "Created",
+        "lastPullAt": "Last pull",
+        "amoAccount": "amoCRM account",
+        "amoName": "Name",
+        "amoSubdomain": "Subdomain",
+        "amoId": "Account ID",
+        "amoCountry": "Country",
+        "amoCurrency": "Currency",
+        "pullCounts": "Initial pull counts",
+        "pullPipelines": "Pipelines",
+        "pullStages": "Stages",
+        "pullUsers": "Users",
+        "pullContacts": "Contacts",
+        "pullDeals": "Deals"
       },
       "new": {
         "title": "New connection",
@@ -232,8 +257,11 @@
         "amocrmDesc": "Official OAuth, data stays read-only",
         "kommoDesc": "Connector coming soon",
         "bitrixDesc": "Connector coming soon",
+        "connectOAuth": "Connect via amoCRM",
         "connectMock": "Connect mock amoCRM",
-        "mockNote": "MVP uses mock mode; real OAuth ships in V1"
+        "mockNote": "MVP uses mock mode; real OAuth ships in V1",
+        "oauthNote": "You will be redirected to amoCRM to approve access. We receive a read-only token and trigger the initial pull.",
+        "oauthError": "Could not start OAuth with amoCRM. Check your connection or try again later."
       },
       "delete": {
         "title": "Delete data",

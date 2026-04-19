@@ -203,6 +203,10 @@
       "status": "Статус",
       "lastSync": "Последняя синхронизация",
       "tokenExpires": "Токен действителен до",
+      "tokenSoon": "Токен скоро истекает",
+      "tokenExpired": "Токен истёк",
+      "mockBadge": "mock",
+      "lastError": "Последняя ошибка",
       "statusActive": "Активно",
       "statusPending": "Ожидает",
       "statusPaused": "На паузе",
@@ -220,10 +224,31 @@
         "settings": "Настройки",
         "auditPage": "Аудит"
       },
+      "flash": {
+        "amocrm_connected": "amoCRM подключён, запущена первичная синхронизация",
+        "mock_oauth_ok": "Mock-подключение amoCRM создано",
+        "amocrm_cancelled": "Вы отменили подключение amoCRM",
+        "amocrm_bad_referer": "amoCRM не вернул поддомен аккаунта. Попробуйте ещё раз",
+        "amocrm_invalid_grant": "Код авторизации amoCRM недействителен. Попробуйте ещё раз",
+        "amocrm_exchange_failed": "Не удалось обменять код amoCRM на токен. Повторите попытку"
+      },
       "detail": {
         "title": "Подключение",
         "overviewTab": "Обзор",
-        "createdAt": "Создано"
+        "createdAt": "Создано",
+        "lastPullAt": "Последний pull",
+        "amoAccount": "Аккаунт amoCRM",
+        "amoName": "Название",
+        "amoSubdomain": "Поддомен",
+        "amoId": "ID аккаунта",
+        "amoCountry": "Страна",
+        "amoCurrency": "Валюта",
+        "pullCounts": "Данные первичной загрузки",
+        "pullPipelines": "Воронок",
+        "pullStages": "Этапов",
+        "pullUsers": "Пользователей",
+        "pullContacts": "Контактов",
+        "pullDeals": "Сделок"
       },
       "new": {
         "title": "Новое подключение",
@@ -232,8 +257,11 @@
         "amocrmDesc": "Официальный OAuth, данные в read-only",
         "kommoDesc": "Подключение скоро будет доступно",
         "bitrixDesc": "Подключение скоро будет доступно",
+        "connectOAuth": "Подключить через amoCRM",
         "connectMock": "Подключить mock amoCRM",
-        "mockNote": "В MVP используется mock-режим: реальный OAuth придёт в V1"
+        "mockNote": "В MVP используется mock-режим: реальный OAuth придёт в V1",
+        "oauthNote": "Вы будете перенаправлены на amoCRM для подтверждения доступа. Мы получим read-only токен и запустим первичную загрузку.",
+        "oauthError": "Не удалось начать OAuth с amoCRM. Проверьте подключение или попробуйте позже."
       },
       "delete": {
         "title": "Удаление данных",

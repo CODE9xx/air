@@ -22,6 +22,9 @@ JOB_KIND_TO_QUEUE: dict[str, QueueName] = {
     "normalize_tenant_data": "crm",
     "refresh_token": "crm",
     "bootstrap_tenant_schema": "crm",
+    # Phase 2A: pull_amocrm_core живёт в worker.jobs.crm_pull —
+    # см. JOB_KIND_TO_MODULE ниже.
+    "pull_amocrm_core": "crm",
     "build_export_zip": "export",
     "run_audit_report": "audit",
     "analyze_conversation": "ai",
@@ -35,6 +38,13 @@ JOB_KIND_TO_QUEUE: dict[str, QueueName] = {
     "issue_invoice": "billing",
 }
 
+# Маппинг kind → имя подмодуля ``worker.jobs.<module>``, если оно НЕ совпадает
+# с именем очереди. По умолчанию func_path = ``worker.jobs.<queue>.<kind>``;
+# здесь перечисляем исключения — функция лежит не в одноимённом модуле.
+JOB_KIND_TO_MODULE: dict[str, str] = {
+    "pull_amocrm_core": "crm_pull",
+}
+
 
 _queues: dict[str, Queue] = {}
 
@@ -46,7 +56,12 @@ def _get_queue(name: QueueName) -> Queue:
     return _queues[name]
 
 
-def enqueue(kind: str, payload: dict[str, Any]) -> str:
+def enqueue(
+    kind: str,
+    payload: dict[str, Any],
+    *,
+    depends_on: str | None = None,
+) -> str:
     """
     Ставит job в очередь по kind.
 
@@ -54,17 +69,24 @@ def enqueue(kind: str, payload: dict[str, Any]) -> str:
 
     В MVP мы не импортируем код воркера из API-пакета — передаём имя функции
     строкой (`job_func_path`), worker зарегистрирует импорт.
+
+    ``depends_on`` — rq_job_id другого job'а, после успешного выполнения которого
+    запустится текущий (Phase 2A: bootstrap_tenant_schema → pull_amocrm_core).
     """
     queue_name = JOB_KIND_TO_QUEUE.get(kind)
     if queue_name is None:
         raise ValueError(f"Unknown job kind: {kind}")
     queue = _get_queue(queue_name)
     # Функция воркера будет опознана по строковому пути.
-    func_path = f"worker.jobs.{queue_name}.{kind}"
+    module = JOB_KIND_TO_MODULE.get(kind, queue_name)
+    func_path = f"worker.jobs.{module}.{kind}"
     # fallback: если worker не поднят — создаём RQ job id всё равно,
     # чтобы API не падал. Sync Redis операция, дешёвая.
     try:
-        job = queue.enqueue(func_path, payload, job_id=str(uuid.uuid4()))
+        enqueue_kwargs: dict[str, Any] = {"job_id": str(uuid.uuid4())}
+        if depends_on:
+            enqueue_kwargs["depends_on"] = depends_on
+        job = queue.enqueue(func_path, payload, **enqueue_kwargs)
         return job.id
     except Exception:
         # В dev worker может отсутствовать. Возвращаем фиктивный id —
