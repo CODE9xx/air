@@ -20,6 +20,7 @@ from app.auth.router import router as auth_router
 from app.billing.router import router as billing_router
 from app.core.log_mask import install_log_masker
 from app.core.settings import get_settings
+from app.crm.external_router import router as crm_external_router
 from app.crm.oauth_router import router as crm_oauth_router
 from app.crm.router import router as crm_router
 from app.dashboards.router import router as dashboards_router
@@ -158,6 +159,7 @@ app.include_router(workspaces_router, prefix=API_PREFIX)
 app.include_router(notifications_router, prefix=API_PREFIX)
 app.include_router(crm_router, prefix=API_PREFIX)
 app.include_router(crm_oauth_router, prefix=API_PREFIX)
+app.include_router(crm_external_router, prefix=API_PREFIX)
 app.include_router(billing_router, prefix=API_PREFIX)
 app.include_router(jobs_router, prefix=API_PREFIX)
 app.include_router(dashboards_router, prefix=API_PREFIX)

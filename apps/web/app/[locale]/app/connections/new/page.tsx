@@ -2,24 +2,31 @@
 
 import { useLocale, useTranslations } from 'next-intl';
 import { useRouter } from 'next/navigation';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { api, ApiError } from '@/lib/api';
-import type { AmoOAuthStartResponse, CrmConnection } from '@/lib/types';
+import type {
+  AmoButtonConfig,
+  AmoOAuthStartResponse,
+  CrmConnection,
+} from '@/lib/types';
 import { useToast } from '@/components/ui/Toast';
 import { useUserAuth } from '@/components/providers/AuthProvider';
 
 /**
  * Страница «Новое подключение».
  *
- * Два режима подключения amoCRM:
- *   — real OAuth (Phase 2A): `GET /integrations/amocrm/oauth/start?workspace_id`
- *     → редирект на amoCRM. Если сервер отвечает 501 (mock-только), показываем
- *     toast и оставляем пользователя на странице.
- *   — mock (legacy): `POST /crm/connections/mock-amocrm`. Остаётся для demo/dev
- *     стенда; в prod (`MOCK_CRM_MODE=false`) ручка не скрыта, но работает как
- *     запрос к реальному OAuth через BE.
+ * Три режима подключения amoCRM:
+ *   — mock (legacy): кнопка «mock» создаёт фейковое подключение через
+ *     `POST /crm/connections/mock-amocrm`. Остаётся для demo/dev.
+ *   — real OAuth (static_client): `GET /integrations/amocrm/oauth/start`
+ *     возвращает `authorize_url` → редиректим юзера на amoCRM consent.
+ *   — real OAuth (external_button, #44.6): `start` создаёт pending
+ *     CrmConnection и возвращает `state + redirect_uri`. Фронт переадресует
+ *     юзера на marketplace-страницу amoCRM (со state в URL); amoCRM сама
+ *     создаёт интеграцию в момент клика и присылает credentials webhook'ом.
+ *     Юзера amoCRM возвращает на наш /oauth/callback.
  */
 export default function NewConnectionPage() {
   const t = useTranslations('cabinet.connections.new');
@@ -32,6 +39,24 @@ export default function NewConnectionPage() {
 
   const [loadingOAuth, setLoadingOAuth] = useState(false);
   const [loadingMock, setLoadingMock] = useState(false);
+  const [buttonConfig, setButtonConfig] = useState<AmoButtonConfig | null>(null);
+
+  // Подгружаем конфиг кнопки один раз при mount'е, чтобы понимать,
+  // какой режим бэкенд ожидает, и показать клиенту соответствующую
+  // подсказку (особенно про webhook для external_button).
+  useEffect(() => {
+    (async () => {
+      try {
+        const cfg = await api.get<AmoButtonConfig>(
+          '/integrations/amocrm/oauth/button-config',
+        );
+        setButtonConfig(cfg);
+      } catch {
+        // Без конфига кнопка всё равно работает в дефолтном static_client
+        // режиме — тихо игнорируем.
+      }
+    })();
+  }, []);
 
   const connectOAuth = async () => {
     setLoadingOAuth(true);
@@ -45,9 +70,28 @@ export default function NewConnectionPage() {
         router.push(res.redirect_url);
         return;
       }
-      // Real: редирект на amoCRM consent-screen.
-      if (res.authorize_url) {
-        window.location.assign(res.authorize_url);
+      // Real, static_client: редирект на amoCRM consent-screen.
+      if (res.auth_mode === 'static_client' || res.authorize_url) {
+        if (res.authorize_url) {
+          window.location.assign(res.authorize_url);
+          return;
+        }
+      }
+      // Real, external_button (#44.6): authorize_url НЕ приходит — фронт
+      // переадресует юзера на marketplace-страницу amoCRM, где он жмёт
+      // «Установить». amoCRM пришлёт нам credentials webhook'ом и
+      // вернёт юзера на /oauth/callback.
+      if (res.auth_mode === 'external_button' && res.connection_id) {
+        // В нашем минимально-инвазивном варианте отправляем юзера на
+        // карточку pending-подключения; backend дождётся credentials
+        // и активирует connection при первом callback'е amoCRM.
+        // (Полноценный embedded button widget — следующий итерационный шаг.)
+        toast({
+          kind: 'info',
+          title: t('externalButtonInstruction'),
+          description: t('externalButtonHint'),
+        });
+        router.push(`/${locale}/app/connections/${res.connection_id}`);
         return;
       }
       toast({ kind: 'error', title: tCommon('error') });
@@ -132,6 +176,21 @@ export default function NewConnectionPage() {
       </div>
 
       <p className="text-xs text-muted-foreground">{t('oauthNote')}</p>
+
+      {buttonConfig?.auth_mode === 'external_button' && !buttonConfig.mock && (
+        <div className="card p-4 text-xs text-muted-foreground border-primary/30">
+          <div className="font-semibold text-foreground mb-1">
+            {t('externalButtonModeTitle')}
+          </div>
+          <p>{t('externalButtonModeDesc')}</p>
+          {(buttonConfig.secrets_uri ?? buttonConfig.webhook_url) && (
+            <p className="mt-2 font-mono break-all">
+              {t('externalButtonWebhookLabel')}:{' '}
+              {buttonConfig.secrets_uri ?? buttonConfig.webhook_url}
+            </p>
+          )}
+        </div>
+      )}
     </div>
   );
 }

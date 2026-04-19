@@ -23,6 +23,7 @@ type OAuthFlash =
   | 'amocrm_invalid_grant'
   | 'amocrm_exchange_failed'
   | 'amocrm_cancelled'
+  | 'amocrm_credentials_missing'
   | 'mock_oauth_ok';
 
 export default function ConnectionDetailPage() {
@@ -70,6 +71,7 @@ export default function ConnectionDetailPage() {
       amocrm_bad_referer: 'error',
       amocrm_invalid_grant: 'error',
       amocrm_exchange_failed: 'error',
+      amocrm_credentials_missing: 'error',
     };
     toast({
       kind: flashToKind[flash] ?? 'info',

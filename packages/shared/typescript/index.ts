@@ -59,6 +59,14 @@ export interface CrmConnectionMetadata {
     contacts?: number;
     deals?: number;
   };
+  // #44.6 external_button:
+  amocrm_auth_mode?: 'static_client' | 'external_button';
+  amocrm_external_integration?: {
+    integration_id?: string | null;
+    account_id?: number | null;
+    account_subdomain?: string | null;
+    received_at?: string | null;
+  };
   [key: string]: unknown;
 }
 
@@ -76,18 +84,63 @@ export interface CrmConnection {
   last_error?: string | null;
   metadata?: CrmConnectionMetadata;
   created_at?: string;
+  // #44.6 — top-level поля для удобства UI.
+  amocrm_auth_mode?: 'static_client' | 'external_button' | null;
+  amocrm_external_integration_id?: string | null;
+  amocrm_credentials_received_at?: string | null;
 }
 
 /**
  * Payload возвращаемый `GET /integrations/amocrm/oauth/start`.
- * В MOCK-режиме — `mock: true, redirect_url`; в реальном — `authorize_url + state`.
+ *
+ *   mock=true              → redirect_url: BE уже создал active подключение.
+ *   auth_mode=static_client → authorize_url: редиректим на amoCRM consent.
+ *   auth_mode=external_button → authorize_url=null, фронт показывает
+ *     embedded amoCRM install-button с state + redirect_uri.
  */
+export type AmoAuthMode = 'static_client' | 'external_button';
+
 export interface AmoOAuthStartResponse {
   mock: boolean;
+  auth_mode?: AmoAuthMode;
   connection_id: string;
-  authorize_url?: string;
+  authorize_url?: string | null;
   state?: string;
+  redirect_uri?: string;
   redirect_url?: string;
+}
+
+/**
+ * Публичная метаинформация кнопки (data-* для <script class="amocrm_oauth">).
+ * Секретов не содержит.
+ */
+export interface AmoButtonMeta {
+  name?: string | null;
+  description?: string | null;
+  logo?: string | null;
+  scopes?: string | null;
+  title?: string | null;
+}
+
+/**
+ * Payload возвращаемый `GET /integrations/amocrm/oauth/button-config`.
+ * Используется фронтом для рендера кнопки/инструкции в зависимости от режима.
+ *
+ * `secrets_uri` — primary (соответствует amoCRM data-secrets_uri, v2 #44.6).
+ * `webhook_url` — legacy alias; backend дублирует туда то же значение
+ *                 для фронтов, которые ещё не мигрировали. Новый код должен
+ *                 читать `secrets_uri`.
+ */
+export interface AmoButtonConfig {
+  mock: boolean;
+  auth_mode: AmoAuthMode;
+  redirect_uri?: string | null;
+  secrets_uri?: string;
+  /** @deprecated alias of `secrets_uri`; will be removed after #48.x. */
+  webhook_url?: string;
+  wait_seconds?: number;
+  client_id?: string | null;
+  button?: AmoButtonMeta;
 }
 
 export type JobStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';

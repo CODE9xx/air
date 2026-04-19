@@ -70,6 +70,14 @@ def _serialize_conn(c: CrmConnection) -> dict[str, Any]:
         "last_error": c.last_error,
         "metadata": c.metadata_json or {},
         "created_at": c.created_at.isoformat() if c.created_at else None,
+        # #44.6 — public-safe поля external_button.
+        "amocrm_auth_mode": c.amocrm_auth_mode,
+        "amocrm_external_integration_id": c.amocrm_external_integration_id,
+        "amocrm_credentials_received_at": (
+            c.amocrm_credentials_received_at.isoformat()
+            if c.amocrm_credentials_received_at
+            else None
+        ),
     }
 
 

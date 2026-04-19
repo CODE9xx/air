@@ -230,7 +230,8 @@
         "amocrm_cancelled": "Вы отменили подключение amoCRM",
         "amocrm_bad_referer": "amoCRM не вернул поддомен аккаунта. Попробуйте ещё раз",
         "amocrm_invalid_grant": "Код авторизации amoCRM недействителен. Попробуйте ещё раз",
-        "amocrm_exchange_failed": "Не удалось обменять код amoCRM на токен. Повторите попытку"
+        "amocrm_exchange_failed": "Не удалось обменять код amoCRM на токен. Повторите попытку",
+        "amocrm_credentials_missing": "amoCRM не прислал credentials в окно ожидания. Попробуйте ещё раз — или сообщите администратору"
       },
       "detail": {
         "title": "Подключение",
@@ -261,7 +262,12 @@
         "connectMock": "Подключить mock amoCRM",
         "mockNote": "В MVP используется mock-режим: реальный OAuth придёт в V1",
         "oauthNote": "Вы будете перенаправлены на amoCRM для подтверждения доступа. Мы получим read-only токен и запустим первичную загрузку.",
-        "oauthError": "Не удалось начать OAuth с amoCRM. Проверьте подключение или попробуйте позже."
+        "oauthError": "Не удалось начать OAuth с amoCRM. Проверьте подключение или попробуйте позже.",
+        "externalButtonInstruction": "Ждём установку интеграции в amoCRM",
+        "externalButtonHint": "После нажатия «Установить» у вас в amoCRM подключение активируется автоматически.",
+        "externalButtonModeTitle": "Режим подключения: external_button",
+        "externalButtonModeDesc": "amoCRM создаст интеграцию в момент установки и пришлёт client_id/secret на наш webhook. Подключение активируется автоматически — делать ничего дополнительно не нужно.",
+        "externalButtonWebhookLabel": "Webhook amoCRM"
       },
       "delete": {
         "title": "Удаление данных",

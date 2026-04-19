@@ -230,7 +230,8 @@
         "amocrm_cancelled": "You cancelled the amoCRM connection",
         "amocrm_bad_referer": "amoCRM did not return an account subdomain. Please try again",
         "amocrm_invalid_grant": "amoCRM authorization code was rejected. Please try again",
-        "amocrm_exchange_failed": "Failed to exchange amoCRM code for a token. Please retry"
+        "amocrm_exchange_failed": "Failed to exchange amoCRM code for a token. Please retry",
+        "amocrm_credentials_missing": "amoCRM did not deliver credentials within the wait window. Please retry — or contact your admin"
       },
       "detail": {
         "title": "Connection",
@@ -261,7 +262,12 @@
         "connectMock": "Connect mock amoCRM",
         "mockNote": "MVP uses mock mode; real OAuth ships in V1",
         "oauthNote": "You will be redirected to amoCRM to approve access. We receive a read-only token and trigger the initial pull.",
-        "oauthError": "Could not start OAuth with amoCRM. Check your connection or try again later."
+        "oauthError": "Could not start OAuth with amoCRM. Check your connection or try again later.",
+        "externalButtonInstruction": "Waiting for amoCRM integration installation",
+        "externalButtonHint": "Once you click 'Install' in amoCRM, your connection will activate automatically.",
+        "externalButtonModeTitle": "Connection mode: external_button",
+        "externalButtonModeDesc": "amoCRM will create the integration on installation and send client_id/secret to our webhook. The connection activates automatically — no extra action needed.",
+        "externalButtonWebhookLabel": "amoCRM webhook"
       },
       "delete": {
         "title": "Delete data",

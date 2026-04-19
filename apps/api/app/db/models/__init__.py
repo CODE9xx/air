@@ -22,6 +22,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.dialects.postgresql import CITEXT
 from sqlalchemy.orm import relationship
@@ -192,6 +193,21 @@ class CrmConnection(MainBase):
     last_sync_at = Column(DateTime(timezone=True), nullable=True)
     last_error = Column(Text, nullable=True)
     metadata_json = Column("metadata", JSONB, nullable=False, server_default="{}")
+
+    # --- amoCRM external_button (#44.6) ---
+    # Режим получения client_id/secret:
+    #   static_client — общий для всех (settings.amocrm_client_id);
+    #   external_button — пришёл от amoCRM вебхуком, хранится per-connection.
+    # Для static_client поля amocrm_* остаются NULL.
+    amocrm_auth_mode = Column(Text, nullable=True)
+    # Per-installation OAuth-credentials (external_button).
+    amocrm_client_id = Column(Text, nullable=True)
+    amocrm_client_secret_encrypted = Column(LargeBinary, nullable=True)
+    # ID интеграции, который amoCRM создала у клиента (для последующего uninstall).
+    amocrm_external_integration_id = Column(Text, nullable=True)
+    # Когда именно webhook доставил credentials — нужно для race-debug'а callback'а.
+    amocrm_credentials_received_at = Column(DateTime(timezone=True), nullable=True)
+
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=now_default())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=now_default())
     deleted_at = Column(DateTime(timezone=True), nullable=True)
@@ -201,6 +217,11 @@ class CrmConnection(MainBase):
         enum_check("status", CrmConnectionStatus, "ck_crmconn_status"),
         Index("ix_crmconn_workspace", "workspace_id"),
         Index("ix_crmconn_status", "status"),
+        Index(
+            "ix_crmconn_amo_integration",
+            "amocrm_external_integration_id",
+            postgresql_where=text("amocrm_external_integration_id IS NOT NULL"),
+        ),
     )
 
 
