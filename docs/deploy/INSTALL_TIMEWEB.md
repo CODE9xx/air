@@ -740,6 +740,270 @@ make prod-tw-logs api | grep email_sent | tail -n 5
 
 ---
 
+## 9b. Gate B Phase 2A — регистрация amoCRM OAuth и включение real CRM
+
+> Делается **после** §9a (SMTP работает, письма доставляются на внешний ящик).
+> Цель: зарегистрировать OAuth-приложение в amoCRM, прописать `AMOCRM_CLIENT_ID`
+> / `AMOCRM_CLIENT_SECRET` / `AMOCRM_REDIRECT_URI` в `.env.production`,
+> переключить `MOCK_CRM_MODE=false` и проверить, что реальный клиент может
+> подключить свой аккаунт amoCRM через UI.
+>
+> **ВАЖНО — backend-код Phase 2A.** OAuth-callback (обмен `code` → tokens,
+> Fernet-шифрование, enqueue `bootstrap_tenant_schema` → `pull_amocrm_core`)
+> уже описан в `apps/api/app/crm/oauth_router.py` и
+> `apps/api/app/core/crypto.py`, но может быть ещё не задеплоен. Перед
+> запуском §9b оператор **обязан** убедиться, что на VPS собран образ с
+> этим кодом — см. §9b.4. Иначе `MOCK_CRM_MODE=false` приведёт к 501 на
+> `/integrations/amocrm/oauth/start`.
+>
+> **Scope §9b — только amoCRM.** Kommo/Bitrix24 в backend пока обозначены
+> только placeholder'ами (`app/db/models/enums.py` `Provider.KOMMO`, stub в
+> `crm_connectors.factory`); для реальной интеграции нужен отдельный connector
+> — Phase 2C/Sprint 4.
+
+### 9b.1. Что даёт эта фаза клиенту
+
+- Клиент жмёт **«Подключить amoCRM»** → amoCRM открывает страницу
+  авторизации → клиент разрешает доступ → возврат на
+  `https://$DOMAIN_APP/app/connections/<id>?flash=amocrm_connected`.
+- Backend шифрует `access_token` / `refresh_token` (Fernet, `FERNET_KEY`) и
+  кладёт в `crm_connections` — **plaintext токенов в БД нет**.
+- Сразу стартует `bootstrap_tenant_schema` → `pull_amocrm_core` (первичная
+  выгрузка pipelines / stages / users / deals / contacts).
+
+### 9b.2. Регистрация OAuth-приложения в amoCRM (оператор, 10 мин)
+
+Делается человеком в панели **своего** amoCRM-аккаунта (`https://<твой>.amocrm.ru`):
+
+1. **Настройки** → **Интеграции** → справа вверху **«Создать интеграцию»** → выбираем **«Внешняя интеграция»** (OAuth 2.0).
+2. Заполняем карточку:
+   - **Название**: `Code9 Analytics`
+   - **Описание**: `AI-аналитика воронок продаж по данным amoCRM`
+   - **Ссылка для перенаправления (redirect_uri)** — копируем **посимвольно**:
+
+     ```
+     https://api.aicode9.ru/api/v1/integrations/amocrm/oauth/callback
+     ```
+
+     (для другого домена — `https://$DOMAIN_API/api/v1/integrations/amocrm/oauth/callback`).
+     Если в панели amoCRM будет другой URI — exchange_code вернёт
+     `invalid_grant` и пользователь увидит flash `amocrm_invalid_grant` (см. §9b.6).
+
+   - **Права доступа**: минимально — **«Сделки»**, **«Контакты»**, **«Компании»**,
+     **«Пользователи»**, **«Задачи»** (для Phase 2A pull достаточно первых четырёх;
+     задачи / беседы / письма — Phase 2B/2C).
+   - **Согласие с политикой** → поставить галочку.
+
+3. Сохранить → amoCRM открывает карточку интеграции с **«ID интеграции»**
+   (`client_id`) и **«Секретный ключ»** (`client_secret`). **Секретный ключ
+   видно ТОЛЬКО при первом показе** — скопируй в password manager
+   немедленно. Если потерял — надо пересоздать интеграцию (amoCRM не даст
+   посмотреть секрет повторно).
+
+4. **НЕ коммить** эти значения в git. Сохрани локально:
+   - `AMOCRM_CLIENT_ID` = ID интеграции
+   - `AMOCRM_CLIENT_SECRET` = секретный ключ
+
+### 9b.3. Обновить .env.production на VPS
+
+Значения подставляет оператор вручную (агент **не должен** получать секрет
+в своём промпте):
+
+```bash
+cd /opt/code9-analytics
+
+# Бэкап текущего .env
+cp .env.production .env.production.$(date -u +%Y%m%dT%H%M%SZ).bak
+
+nano .env.production
+```
+
+Нужные правки (блок `# --- Real CRM OAuth`):
+
+```ini
+# Переключаем на реальные CRM:
+MOCK_CRM_MODE=false
+
+AMOCRM_CLIENT_ID=<ID интеграции из amoCRM>
+AMOCRM_CLIENT_SECRET=<секретный ключ из amoCRM>
+AMOCRM_REDIRECT_URI=https://api.aicode9.ru/api/v1/integrations/amocrm/oauth/callback
+```
+
+**Fail-fast guard** (`app/core/settings.py::check_prod_secrets`): если
+`APP_ENV=production` + `MOCK_CRM_MODE=false`, но хотя бы один из
+`AMOCRM_CLIENT_ID` / `AMOCRM_CLIENT_SECRET` / `AMOCRM_REDIRECT_URI` пустой —
+api-контейнер **не стартует**. Дополнительно `AMOCRM_REDIRECT_URI` обязан
+начинаться с `https://` (amoCRM не принимает http в prod).
+
+```bash
+# Проверка: в .env.production нет CHANGE_ME, AMOCRM_* заполнены, MOCK=false
+grep -E '^(MOCK_CRM_MODE|AMOCRM_REDIRECT_URI)=' .env.production
+grep -c '^AMOCRM_CLIENT_ID=.\+$' .env.production   # → 1
+grep -c '^AMOCRM_CLIENT_SECRET=.\+$' .env.production   # → 1
+```
+
+### 9b.4. Пересобрать и перезапустить api / worker / scheduler
+
+OAuth-callback, `crypto.py` и `pull_amocrm_core` живут в образах api и worker.
+После `git pull` на VPS образы нужно **пересобрать** — runtime-env один, но
+код вшит в слой образа:
+
+```bash
+cd /opt/code9-analytics
+git pull --ff-only
+
+# Sanity-check: файлы на месте (если нет — код Phase 2A ещё не смержен в твою ветку):
+test -f apps/api/app/crm/oauth_router.py && echo "oauth_router: ok"
+test -f apps/api/app/core/crypto.py      && echo "crypto:       ok"
+test -f apps/worker/worker/jobs/crm_pull.py && echo "crm_pull:    ok"
+
+# Пересборка (≈3–8 мин):
+docker compose -f deploy/docker-compose.prod.timeweb.yml build api worker scheduler
+
+# Перезапуск ТОЛЬКО api/worker/scheduler (caddy/web/redis не трогаем — без downtime для SPA):
+docker compose -f deploy/docker-compose.prod.timeweb.yml up -d --force-recreate api worker scheduler
+
+# Убедиться, что api прошёл prod-валидатор:
+docker compose -f deploy/docker-compose.prod.timeweb.yml ps
+docker compose -f deploy/docker-compose.prod.timeweb.yml logs api --since=2m | grep -Ei 'error|traceback|fail-fast' || echo "✓ нет ошибок старта"
+```
+
+**abort**:
+- Если в логах api при старте — `ValueError: MOCK_CRM_MODE=false, но не заполнены: AMOCRM_...` → вернись в §9b.3, проверь `.env.production`.
+- Если импорт `app.core.crypto` / `crm_connectors.amocrm` падает → Phase 2A backend ещё не смержен в твою ветку → откати `MOCK_CRM_MODE=true` в `.env.production`, перезапусти api.
+
+### 9b.5. UI-проверка: подключение реального amoCRM
+
+Из браузера под живым пользователем:
+
+1. `https://$DOMAIN_APP/ru/app/connections/new` → кнопка «Подключить amoCRM».
+   - **Если UI ещё вызывает `POST /crm/connections/mock-amocrm` напрямую**
+     (старый mock-flow, apps/web/app/[locale]/app/connections/new/page.tsx) —
+     это значит Phase 2B UI change не докатился. Открой `/app/connections/new`
+     в DevTools → Network и проверь, какой endpoint дёргает кнопка:
+     - Ожидаемо: `GET /api/v1/integrations/amocrm/oauth/start?workspace_id=...`
+       → возвращает JSON `{"mock": false, "authorize_url": "https://www.amocrm.com/oauth?...", "connection_id": "...", "state": "..."}`.
+     - Фронт должен сделать `window.location.assign(authorize_url)`.
+   - Как быстрый обходной путь можно вручную дёрнуть `start` из DevTools:
+     `fetch('/api/v1/integrations/amocrm/oauth/start?workspace_id=<uuid>', {credentials: 'include'}).then(r=>r.json()).then(console.log)`
+     — взять `authorize_url` и перейти по нему.
+2. amoCRM показывает экран авторизации: «Разрешить Code9 Analytics доступ к вашему аккаунту».
+   - **«Разрешить»** → редирект на callback → BE выполняет exchange_code +
+     fetch_account + Fernet-encrypt + enqueue jobs → редирект на
+     `https://$DOMAIN_APP/app/connections/<id>?flash=amocrm_connected`.
+   - **«Отмена»** → redirect на callback с `error=access_denied` →
+     редирект на `/app/connections?flash=amocrm_cancelled`.
+3. На странице `/app/connections/<id>` статус подключения должен стать
+   **`active`**, появиться `external_account_id`, `external_domain`
+   (`<subdomain>.amocrm.ru`).
+4. Через 1–2 минуты в workspace появятся pipelines / stages / users
+   (первая страница `pull_amocrm_core`). Полный дамп зависит от объёма
+   аккаунта — сотни тысяч сделок могут тянуться часами (пагинация по 250).
+
+### 9b.6. Безопасные команды для логов / диагностики
+
+Все три команды исключают токены и пароли из вывода:
+
+```bash
+# 1) OAuth start/callback работают, без secrets:
+docker compose -f deploy/docker-compose.prod.timeweb.yml logs api --since=15m \
+  | grep -E 'amocrm_oauth_(started|completed|user_declined|state_miss|no_subdomain)|amocrm_(exchange|fetch_account|token_encrypt)_' \
+  | head -n 20
+
+# 2) Sanity: секретов НЕТ в логах (должно быть пусто):
+docker compose -f deploy/docker-compose.prod.timeweb.yml logs api --since=15m \
+  | grep -iE 'client_secret|access_token|refresh_token|Bearer [A-Za-z0-9]|AMOCRM_CLIENT_SECRET|FERNET_KEY'
+
+# 3) Worker — bootstrap + первый pull прошли:
+docker compose -f deploy/docker-compose.prod.timeweb.yml logs worker --since=15m \
+  | grep -E 'bootstrap_tenant_schema|pull_amocrm_core' | head -n 30
+```
+
+Каждое подключение в Redis оставляет ключ `oauth_state:amocrm:<random>` с
+TTL 600s — сразу удаляется после успешного callback'а (защита от replay).
+Проверить «висящие» state'ы:
+
+```bash
+docker compose -f deploy/docker-compose.prod.timeweb.yml exec redis \
+  redis-cli --scan --pattern 'oauth_state:amocrm:*' | head
+```
+
+Ожидаемо: ничего (или 1-2 свежих, если сейчас идёт OAuth). Если висит сотня —
+state тикнулись, но ни один callback не отработал → проблема на redirect_uri
+/ firewall / DNS `api.aicode9.ru`.
+
+### 9b.7. Troubleshooting типовых ошибок
+
+Флеши в URL приходят на `/app/connections[/<id>]?flash=<код>`:
+
+| Flash                         | Причина                                                                                       | Что делать                                                                                                                                             |
+|-------------------------------|-----------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `amocrm_cancelled`            | Пользователь нажал «Отмена» в amoCRM.                                                        | Норма. Просто просим попробовать ещё раз.                                                                                                              |
+| `amocrm_bad_referer`          | amoCRM вернул callback без query-параметра `referer`, поэтому нельзя определить subdomain.    | Редкий случай: amoCRM-портал сменил поведение. Смотри `amocrm_oauth_no_subdomain` в логах; при повторении — заводим issue, даём workaround в UI.       |
+| `amocrm_invalid_grant`        | amoCRM отклонил authorization_code (`400 hint=invalid_grant`). Обычно — mismatch redirect_uri. | 1) Проверь `AMOCRM_REDIRECT_URI` в `.env.production` **посимвольно** == редиректу в панели amoCRM. 2) code живёт ~20 сек — не ретраить старый callback. |
+| `amocrm_exchange_failed`      | Сеть / 5xx / таймаут при обмене code → token.                                                  | `docker compose logs api --since=5m \| grep amocrm_exchange_failed` — смотри `error_type`. 5xx amoCRM — ждём; таймаут — проверь outbound TCP.          |
+| `amocrm_connected`            | Успех. Подключение active.                                                                    | —                                                                                                                                                      |
+| `mock_oauth_ok`               | `MOCK_CRM_MODE=true` всё ещё активен.                                                         | Если ожидался real OAuth — вернись в §9b.3 и смени `MOCK_CRM_MODE`.                                                                                    |
+
+Ошибки HTTP на стороне BE:
+
+| Ответ `/oauth/start` | Причина                                                                                  | Что делать                                                                                       |
+|----------------------|------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------|
+| 501 `configuration_error` + `amocrm_connector_import_failed` | PYTHONPATH не содержит `/packages/crm-connectors/src`. | Проверь `deploy/docker-compose.prod.timeweb.yml` → api/worker service → `PYTHONPATH`. Должно быть `/app:/app/scripts:/packages/ai/src:/packages/crm-connectors/src`. Пересобери. |
+| 501 `configuration_error` + `AMOCRM_CLIENT_ID не задан` | `.env.production` не подмонтирован / `AMOCRM_CLIENT_ID` пустой. | §9b.3, затем `up -d --force-recreate api`. |
+| 403 `forbidden`      | Пользователь не owner/admin workspace.                                                    | Пригласи его с ролью owner/admin или используй другого.                                          |
+| 404 `not_found`      | `workspace_id` не принадлежит пользователю / workspace удалён.                            | Проверь UUID в URL start-запроса.                                                               |
+
+Ошибка `/oauth/callback`:
+
+| Ответ | Причина | Что делать |
+|-------|---------|------------|
+| 400 `invalid_state` | state истёк (TTL 10 мин), подменён, или уже использован (replay). | Попроси пользователя начать заново. Если повторяется систематически — проверь clock drift на VPS (`timedatectl`) и Redis (`docker compose exec redis redis-cli time`). |
+| 500 + `amocrm_token_encrypt_failed` в логах | `FERNET_KEY` отсутствует / битый / поменялся между deploy'ами. | `grep FERNET_KEY .env.production` → 44-байтный base64. Если ключ был изменён после первых подключений — старые зашифрованные токены потеряны, надо переподключать. |
+
+### 9b.8. Безопасность (операционные правила для Gate B Phase 2A)
+
+- `AMOCRM_CLIENT_SECRET` виден в `.env.production` (mode 600) и только там.
+  **Не** пишем его в issue-трекер, чаты, git, Sentry.
+- `access_token` / `refresh_token` хранятся в
+  `crm_connections.access_token_encrypted` / `refresh_token_encrypted` как
+  Fernet-ciphertext. Plaintext не кладём ни в БД, ни в `metadata_json`,
+  ни в `payload` jobs.
+- amoCRM ротирует `refresh_token` на каждом `refresh` — worker должен
+  сохранять **новый** refresh, а не переиспользовать старый
+  (`_token_pair_from_response` уже делает правильно). Если увидишь, что
+  через 24 часа все подключения внезапно ушли в `lost_token` — первым делом
+  проверь, что `refresh` job в worker'е пишет новый refresh в БД.
+- Любое попадание `access_token` / `refresh_token` / `client_secret` в
+  stdout / stderr / Sentry — **incident**, повод для ротации client_secret
+  в amoCRM (создать новую интеграцию, обновить `.env.production`, убить
+  старую в amoCRM).
+
+### 9b.9. Acceptance для Gate B Phase 2A
+
+- [ ] В amoCRM создана интеграция «Code9 Analytics», redirect_uri посимвольно совпадает с `AMOCRM_REDIRECT_URI`.
+- [ ] `.env.production` на VPS содержит `MOCK_CRM_MODE=false`, заполненные `AMOCRM_CLIENT_ID`, `AMOCRM_CLIENT_SECRET`, `AMOCRM_REDIRECT_URI`. Mode 600, не в git.
+- [ ] `docker compose -f deploy/docker-compose.prod.timeweb.yml ps` — api/worker/scheduler healthy после пересборки.
+- [ ] Реальное подключение прошло: flash `amocrm_connected`, `crm_connections.status=active`, `external_account_id` / `external_domain` заполнены.
+- [ ] В логах api есть `amocrm_oauth_started` + `amocrm_oauth_completed`; нет `client_secret` / `access_token` / `Bearer <...>`.
+- [ ] Worker стартанул `bootstrap_tenant_schema` → `pull_amocrm_core`, оба перешли в `finished` без `InvalidGrant` / `TokenExpired`.
+- [ ] `/app/connections/<id>` в UI показывает pipelines / stages / users клиента.
+
+После выполнения — добавь строку в `docs/deploy/GATE_SIGNOFFS.md` → Gate B
+log (колонка «Клиенты» — кто первый прошёл real OAuth, в скобках subdomain
+amoCRM). Phase 2B (chats, tasks, calls, companies, retention) можно
+запускать только после этой галочки.
+
+### 9b.10. Kommo / Bitrix24 — когда
+
+В backend сейчас только enum `Provider.KOMMO` и stub factory; реальный
+connector (`crm_connectors.kommo`, OAuth endpoints, pull jobs) — Phase 2C.
+До мерджа соответствующего кода попытка выставить
+`provider=kommo` в коде приведёт к `NotImplementedError` в factory.
+Этот runbook обновится при запуске Kommo — пока не подключаем.
+
+---
+
 ## 10. Troubleshooting (быстрые ответы, если что-то идёт не так)
 
 | Симптом | Причина / первое действие |
