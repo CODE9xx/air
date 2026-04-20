@@ -83,12 +83,12 @@ class ExternalCredentialsPayload(BaseModel):
     account_subdomain: str | None = Field(default=None, max_length=128)
 
 
-@router.post("/secrets", status_code=status.HTTP_204_NO_CONTENT)
-@router.post("/credentials", status_code=status.HTTP_204_NO_CONTENT)
+@router.post("/secrets", status_code=status.HTTP_200_OK)
+@router.post("/credentials", status_code=status.HTTP_200_OK)
 async def receive_secrets(
     payload: ExternalCredentialsPayload,
     session: AsyncSession = Depends(get_session),
-) -> None:
+) -> dict[str, str]:
     """
     Webhook от amoCRM: сохраняем per-install client_id/secret в БД.
 
@@ -247,5 +247,23 @@ async def receive_secrets(
             "account_id": payload.account_id,
         },
     )
-    # 204 — amoCRM не ожидает тело ответа.
-    return None
+    # Возвращаем HTTP 200 OK с JSON-телом (НЕ 204 No Content).
+    #
+    # amoCRM external_button flow (#44.6v5 → #51.3):
+    #   - Их server-side парсер делает строгую проверку `response.status === 200`.
+    #   - Когда мы раньше отдавали 204 No Content, amoCRM в popup'е показывал
+    #     «Произошла ошибка создания, обратитесь к разработчику интеграции.
+    #      (Code 204)» и НЕ выполнял redirect на redirect_uri?code=...&state=...
+    #     То есть integrations успешно сохранялись у нас, но OAuth-flow в amoCRM
+    #     не завершался: без redirect callback'а мы не получали authorization
+    #     code и не могли обменять на access_token.
+    #   - Число «204» в UI-ошибке совпадало с HTTP-статусом нашего ответа —
+    #     это и выдало корень: их error message буквально включает status code,
+    #     полученный от secrets_uri.
+    #
+    # Body `{"status": "ok"}` не обязателен по их docs, но:
+    #   (a) безопасен (никаких секретов — literal "ok");
+    #   (b) даёт диагностический маркер при ручной проверке (curl -i);
+    #   (c) некоторые webhook-парсеры падают на нулевом body, поэтому пустой
+    #       не-null ответ предпочтительнее.
+    return {"status": "ok"}
