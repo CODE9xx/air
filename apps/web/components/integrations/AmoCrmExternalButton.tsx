@@ -93,13 +93,19 @@ export function AmoCrmExternalButton({
     container.innerHTML = '';
 
     const meta = buttonConfig.button ?? {};
-    const dataName = meta.name ?? 'Code9 Analytics';
+    // Все дефолты должны совпадать с prod env (AMOCRM_BUTTON_*):
+    // имя бренда пишем CODE9 в верхнем регистре, как на сайте и лендингах.
+    // `dataLogo` — ABSOLUTE URL на публичный asset /amocrm-logo.png
+    // (Next.js public/). amoCRM marketplace загружает эту картинку при
+    // установке интеграции и показывает её в «Установленных»; относительный
+    // путь у них не раскрывается, поэтому собираем через `location.origin`.
+    const dataName = meta.name ?? 'CODE9 Analytics';
     const dataDescription =
       meta.description ??
-      'AI analytics and audit for amoCRM sales and communications';
+      'AI-аналитика и аудит продаж и коммуникаций в amoCRM';
     const dataScopes = meta.scopes ?? 'crm,notifications';
     const dataTitle = meta.title ?? 'Подключить amoCRM';
-    const dataLogo = meta.logo ?? '';
+    const dataLogo = meta.logo ?? `${window.location.origin}/amocrm-logo.png`;
 
     const script = document.createElement('script');
     script.className = 'amocrm_oauth';
