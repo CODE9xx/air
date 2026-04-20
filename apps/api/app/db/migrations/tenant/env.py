@@ -26,6 +26,7 @@ if str(_API_ROOT) not in sys.path:
 
 from app.db.models import TenantBase  # noqa: E402
 from app.db import models  # noqa: E402,F401 — регистрирует tenant-модели
+from app.db.url_translate import asyncpg_to_psycopg2  # noqa: E402
 
 config = context.config
 
@@ -36,11 +37,10 @@ _SCHEMA_NAME_RE = re.compile(r"^[a-z_][a-z0-9_]{0,62}$")
 
 
 def _get_url() -> str:
+    # Любой sync-контекст должен транслировать ``ssl=require`` → ``sslmode=require``,
+    # иначе psycopg2 падает на managed Postgres (Timeweb). См. url_translate.py.
     url = os.getenv("DATABASE_URL", "postgresql://code9:code9@postgres:5432/code9")
-    return (
-        url.replace("postgresql+asyncpg://", "postgresql+psycopg2://")
-        .replace("postgres+asyncpg://", "postgresql+psycopg2://")
-    )
+    return asyncpg_to_psycopg2(url)
 
 
 def _get_schema() -> str:

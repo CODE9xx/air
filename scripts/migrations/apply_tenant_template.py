@@ -19,21 +19,35 @@ from alembic import command
 from alembic.config import Config
 from sqlalchemy import create_engine, text
 
+# Импорт из api-пакета: scripts/ запускается из репо-корня, где ``apps/api``
+# уже добавлен в sys.path alembic env.py / worker'ом. В worker-контейнере
+# модуль доступен через PYTHONPATH (см. docker-compose.prod.timeweb.yml).
+# Если импорт не проходит — значит apply_tenant_template вызван из среды
+# без api-пакета; в этом случае падаем явно, чтобы не словить ssl-DSN
+# ошибку позже.
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_API_ROOT = _REPO_ROOT / "apps" / "api"
+if str(_API_ROOT) not in sys.path:
+    sys.path.insert(0, str(_API_ROOT))
+
+from app.db.url_translate import asyncpg_to_psycopg2  # noqa: E402
+
 # CR-04 (QA, 2026-04-18): ужесточён regex — обязателен prefix crm_, защита от
 # попадания зарезервированных имён PostgreSQL. Закрыто Lead Architect.
 _SCHEMA_RE = re.compile(r"^crm_[a-z0-9][a-z0-9_]{1,59}$")
 
-_REPO_ROOT = Path(__file__).resolve().parents[2]
 _ALEMBIC_INI = _REPO_ROOT / "apps" / "api" / "app" / "db" / "migrations" / "alembic.ini"
 
 
 def _sync_url() -> str:
-    """Sync-URL (psycopg2) из ``DATABASE_URL``."""
+    """Sync-URL (psycopg2) из ``DATABASE_URL``.
+
+    Поверх смены драйвера нужно также транслировать ``ssl=require`` →
+    ``sslmode=require`` — psycopg2 не понимает asyncpg-style `ssl`. См.
+    ``apps/api/app/db/url_translate.py``.
+    """
     url = os.getenv("DATABASE_URL", "postgresql://code9:code9@postgres:5432/code9")
-    return (
-        url.replace("postgresql+asyncpg://", "postgresql+psycopg2://")
-        .replace("postgres+asyncpg://", "postgresql+psycopg2://")
-    )
+    return asyncpg_to_psycopg2(url)
 
 
 def _validate_schema_name(schema: str) -> None:

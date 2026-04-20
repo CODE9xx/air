@@ -100,6 +100,12 @@ class JobKind(StrEnum):
     RECALC_BALANCE = "recalc_balance"
     ISSUE_INVOICE = "issue_invoice"
     BOOTSTRAP_TENANT_SCHEMA = "bootstrap_tenant_schema"
+    # Task #52 (Phase 2A): первичный pull ядра amoCRM (users/pipelines/stages/
+    # leads/contacts/companies-partial). Функция — worker.jobs.crm_pull.
+    # Job ставится в очередь по завершении bootstrap_tenant_schema после
+    # сохранения токенов. В enum добавлен отдельным kind'ом, т.к. иначе
+    # ck_job_kind CHECK constraint отклоняет INSERT при enqueue (Bug A).
+    PULL_AMOCRM_CORE = "pull_amocrm_core"
 
 
 class JobQueue(StrEnum):
