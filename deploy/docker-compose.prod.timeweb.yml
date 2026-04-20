@@ -43,6 +43,8 @@ services:
         condition: service_healthy
       api:
         condition: service_healthy
+      codenine-form-proxy:
+        condition: service_healthy
     networks:
       - code9-prod-tw
     healthcheck:
@@ -57,6 +59,13 @@ services:
       context: ..
       dockerfile: infra/docker/web.Dockerfile
       target: prod
+      # NEXT_PUBLIC_* запекаются Next.js в момент build-stage.
+      # env_file/environment ниже действуют ТОЛЬКО в runtime —
+      # без этих build-args bundle получит дефолты (USE_MOCK_API=true
+      # до фикса #51.2) и перехватит реальные API-вызовы.
+      args:
+        NEXT_PUBLIC_USE_MOCK_API: ${NEXT_PUBLIC_USE_MOCK_API:-false}
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-https://api.aicode9.ru}
     container_name: code9-prod-web
     restart: unless-stopped
     env_file:
@@ -162,6 +171,28 @@ services:
     networks:
       - code9-prod-tw
     command: ["python", "-m", "worker.scheduler"]
+
+  # --- Public form proxy: hides external webhook from browser ---
+  codenine-form-proxy:
+    image: python:3.12-alpine
+    container_name: codenine-form-proxy
+    restart: unless-stopped
+    env_file:
+      - ../.env.production
+    environment:
+      PORT: 8080
+    expose:
+      - "8080"
+    volumes:
+      - ./codenine_form_proxy.py:/app/codenine_form_proxy.py:ro
+    command: ["python", "/app/codenine_form_proxy.py"]
+    networks:
+      - code9-prod-tw
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:8080/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
 
   # --- Redis: bind на 127.0.0.1 → снаружи недоступен ---
   redis:

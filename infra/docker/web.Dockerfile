@@ -25,6 +25,16 @@ FROM deps AS build
 COPY apps/web .
 # shared/typescript re-exported via apps/web/lib/types.ts ('../../../packages/shared/typescript')
 COPY packages/shared /packages/shared
+# NEXT_PUBLIC_* переменные Next.js инлайнит в client bundle в момент
+# `next build`. compose-level env_file/environment действуют только в
+# runtime и до build-stage не доходят — именно поэтому у билдов в prod
+# USE_MOCK_API=true пробрасывался дефолтом и mock-слой перехватывал
+# реальные запросы (#51.2). Прокидываем нужные NEXT_PUBLIC_* как ARG +
+# ENV, а значения передаёт docker-compose.prod.*.yml через build.args.
+ARG NEXT_PUBLIC_USE_MOCK_API=false
+ARG NEXT_PUBLIC_API_BASE_URL=https://api.aicode9.ru
+ENV NEXT_PUBLIC_USE_MOCK_API=${NEXT_PUBLIC_USE_MOCK_API}
+ENV NEXT_PUBLIC_API_BASE_URL=${NEXT_PUBLIC_API_BASE_URL}
 RUN npm run build
 
 # --- prod: минимальный рантайм ---

@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <title>Code9</title>
+  <!-- Code9 brand favicon — black cube mark with </> and C9 lockup.
+       Designed to stay readable at 16/32px where 3D detail is lost. -->
+  <rect width="64" height="64" rx="12" fill="#0f172a"/>
+  <g fill="#ffffff" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-weight="700" text-anchor="middle">
+    <text x="32" y="21" font-size="11" letter-spacing="-0.02em">&lt;/&gt;</text>
+    <text x="32" y="48" font-size="28" letter-spacing="-0.04em" font-family="Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif">C9</text>
+  </g>
+</svg>
