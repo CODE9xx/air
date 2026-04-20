@@ -644,7 +644,14 @@ async def oauth_callback(
         )
     )
 
-    pull_payload = {"connection_id": str(conn.id), "first_pull": True}
+    # Phase 2A scope-lock: first pull ограничен 100 последними сделками.
+    # deals_limit прокидывается до _pull_deals → connector.fetch_deals(..., limit=...)
+    # с early-exit; companies / emails / calls в Phase 2A не синкаются.
+    pull_payload = {
+        "connection_id": str(conn.id),
+        "first_pull": True,
+        "deals_limit": 100,
+    }
     pull_rq_id = enqueue(
         "pull_amocrm_core", pull_payload, depends_on=bootstrap_rq_id
     )
