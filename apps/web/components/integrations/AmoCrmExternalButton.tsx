@@ -132,6 +132,28 @@ export function AmoCrmExternalButton({
     let cancelled = false;
     const handleLoad = () => {
       if (cancelled) return;
+      // amoCRM's button.min.js installs its button renderer as
+      // `window.onload = function(){ ...render... }` — it assumes it
+      // will be included in the initial HTML, so the window 'load'
+      // event fires *after* evaluation and triggers the rendering.
+      //
+      // In our SPA we inject the script dynamically after user action,
+      // long after 'load' has already fired. Re-assigning window.onload
+      // at that point is a no-op (the event doesn't re-fire), so the
+      // button never gets rendered despite the script loading 200 OK.
+      //
+      // Fix: manually invoke the handler that the widget just installed.
+      // We guard against (a) non-function handlers (e.g., if amoCRM ever
+      // ships a fix), and (b) handler throwing — the load event itself
+      // succeeded, so we still set status='ready' to allow retry.
+      try {
+        const handler = window.onload;
+        if (typeof handler === 'function') {
+          handler.call(window, new Event('load'));
+        }
+      } catch {
+        /* widget render threw; status='ready' still lets user retry */
+      }
       setStatus('ready');
     };
     const handleError = () => {
