@@ -267,7 +267,13 @@
         "externalButtonHint": "После нажатия «Установить» у вас в amoCRM подключение активируется автоматически.",
         "externalButtonModeTitle": "Режим подключения: external_button",
         "externalButtonModeDesc": "amoCRM создаст интеграцию в момент установки и пришлёт client_id/secret на наш webhook. Подключение активируется автоматически — делать ничего дополнительно не нужно.",
-        "externalButtonWebhookLabel": "Webhook amoCRM"
+        "externalButtonWebhookLabel": "Webhook amoCRM",
+        "externalButtonStepTitle": "Шаг 2: подтвердите установку в amoCRM",
+        "externalButtonStepHint": "Нажмите кнопку amoCRM ниже и подтвердите установку. Мы активируем подключение автоматически, когда amoCRM пришлёт webhook.",
+        "externalButtonLoading": "Загружаем кнопку amoCRM…",
+        "externalButtonLoadError": "Не удалось загрузить кнопку amoCRM. Проверьте соединение и попробуйте ещё раз.",
+        "externalButtonRetry": "Повторить",
+        "externalButtonDenied": "Установка в amoCRM отменена или прервана."
       },
       "delete": {
         "title": "Удаление данных",

@@ -267,7 +267,13 @@
         "externalButtonHint": "Once you click 'Install' in amoCRM, your connection will activate automatically.",
         "externalButtonModeTitle": "Connection mode: external_button",
         "externalButtonModeDesc": "amoCRM will create the integration on installation and send client_id/secret to our webhook. The connection activates automatically — no extra action needed.",
-        "externalButtonWebhookLabel": "amoCRM webhook"
+        "externalButtonWebhookLabel": "amoCRM webhook",
+        "externalButtonStepTitle": "Step 2: confirm installation in amoCRM",
+        "externalButtonStepHint": "Click the amoCRM button below and confirm the installation. We activate the connection automatically once amoCRM fires the webhook.",
+        "externalButtonLoading": "Loading amoCRM button…",
+        "externalButtonLoadError": "Failed to load the amoCRM button. Check your connection and try again.",
+        "externalButtonRetry": "Retry",
+        "externalButtonDenied": "amoCRM installation cancelled or interrupted."
       },
       "delete": {
         "title": "Delete data",
