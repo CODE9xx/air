@@ -7,6 +7,22 @@
 - CI-скриптом при мерже новой tenant-миграции — прогоняем по всем active.
 
 Все операции — sync (psycopg2). ``DATABASE_URL`` читается из env.
+
+Изоляция от ``apps/api`` в worker-контейнере (Task #52.3, Bug C)
+---------------------------------------------------------------
+``scripts/`` монтируется в worker bind-mount'ом. Ранее файл импортировал
+``from app.db.url_translate import asyncpg_to_psycopg2`` и полагался на
+sys.path-хак, добавляющий ``<repo>/apps/api`` — но в worker-образе этого
+пути не существовало, и bootstrap падал с ``ModuleNotFoundError``. Теперь
+DSN-транслятор **дублируется inline** (см. ниже); tenant-alembic (env.py,
+версии) по-прежнему читается с диска через ``_ALEMBIC_INI`` — для них
+compose монтирует ``apps/api`` в worker read-only.
+
+Три копии транслятора обязаны меняться одним коммитом:
+  * apps/api/app/db/url_translate.py           (source of truth)
+  * apps/worker/worker/lib/url_translate.py    (worker hot path mirror)
+  * scripts/migrations/apply_tenant_template.py (этот файл, inline copy)
+Контрактные тесты: ``tests/api/test_url_translate.py`` (31 case).
 """
 from __future__ import annotations
 
@@ -14,23 +30,13 @@ import os
 import re
 import sys
 from pathlib import Path
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from alembic import command
 from alembic.config import Config
 from sqlalchemy import create_engine, text
 
-# Импорт из api-пакета: scripts/ запускается из репо-корня, где ``apps/api``
-# уже добавлен в sys.path alembic env.py / worker'ом. В worker-контейнере
-# модуль доступен через PYTHONPATH (см. docker-compose.prod.timeweb.yml).
-# Если импорт не проходит — значит apply_tenant_template вызван из среды
-# без api-пакета; в этом случае падаем явно, чтобы не словить ssl-DSN
-# ошибку позже.
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-_API_ROOT = _REPO_ROOT / "apps" / "api"
-if str(_API_ROOT) not in sys.path:
-    sys.path.insert(0, str(_API_ROOT))
-
-from app.db.url_translate import asyncpg_to_psycopg2  # noqa: E402
 
 # CR-04 (QA, 2026-04-18): ужесточён regex — обязателен prefix crm_, защита от
 # попадания зарезервированных имён PostgreSQL. Закрыто Lead Architect.
@@ -39,13 +45,69 @@ _SCHEMA_RE = re.compile(r"^crm_[a-z0-9][a-z0-9_]{1,59}$")
 _ALEMBIC_INI = _REPO_ROOT / "apps" / "api" / "app" / "db" / "migrations" / "alembic.ini"
 
 
-def _sync_url() -> str:
-    """Sync-URL (psycopg2) из ``DATABASE_URL``.
+# ---------------------------------------------------------------------------
+# INLINE asyncpg→psycopg2 translator (Task #52.3, Bug C).
+# Контракт идентичен ``apps/api/app/db/url_translate.asyncpg_to_psycopg2``.
+# Безопасность: функция НЕ логирует URL ни при каких обстоятельствах.
+# ---------------------------------------------------------------------------
 
-    Поверх смены драйвера нужно также транслировать ``ssl=require`` →
-    ``sslmode=require`` — psycopg2 не понимает asyncpg-style `ssl`. См.
-    ``apps/api/app/db/url_translate.py``.
+_SSL_TRUTHY = frozenset({"true", "require", "1"})
+_SSL_FALSY = frozenset({"false", "disable", "0", ""})
+_SSL_LIBPQ_PASSTHROUGH = frozenset({"prefer", "allow", "verify-ca", "verify-full"})
+
+
+def asyncpg_to_psycopg2(url: str) -> str:
+    """asyncpg DSN → psycopg2 DSN; ``ssl=…`` → ``sslmode=…``.
+
+    Правила:
+      * ``postgresql+asyncpg://…`` / ``postgres+asyncpg://…`` → ``postgresql+psycopg2://…``
+      * ``ssl=require|true|1`` → ``sslmode=require``
+      * ``ssl=disable|false|0|`` (пусто) → ``sslmode=disable``
+      * ``ssl=prefer|allow|verify-ca|verify-full`` → то же значение под sslmode
+      * любое иное → ``sslmode=require`` (безопасный дефолт для managed-Postgres)
+      * tie-break: если ``sslmode`` уже присутствует, он выигрывает и ``ssl``
+        отбрасывается.
+      * username / password / host / path / прочие query-params сохраняются.
     """
+    # 1. Схема/драйвер.
+    if url.startswith("postgresql+asyncpg://"):
+        url = "postgresql+psycopg2://" + url[len("postgresql+asyncpg://"):]
+    elif url.startswith("postgres+asyncpg://"):
+        url = "postgresql+psycopg2://" + url[len("postgres+asyncpg://"):]
+
+    # 2. Query-params.
+    parts = urlsplit(url)
+    if not parts.query:
+        return url
+
+    qs = parse_qsl(parts.query, keep_blank_values=True)
+    explicit_sslmode_present = any(k == "sslmode" for k, _ in qs)
+
+    translated: list[tuple[str, str]] = []
+    for key, value in qs:
+        if key == "ssl":
+            if explicit_sslmode_present:
+                # Явный sslmode → ssl отбрасываем.
+                continue
+            low = value.strip().lower()
+            if low in _SSL_TRUTHY:
+                translated.append(("sslmode", "require"))
+            elif low in _SSL_FALSY:
+                translated.append(("sslmode", "disable"))
+            elif low in _SSL_LIBPQ_PASSTHROUGH:
+                translated.append(("sslmode", low))
+            else:
+                # Неизвестное значение — безопасный дефолт для managed-hosts.
+                translated.append(("sslmode", "require"))
+        else:
+            translated.append((key, value))
+
+    new_query = urlencode(translated, doseq=False)
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, new_query, parts.fragment))
+
+
+def _sync_url() -> str:
+    """Sync-URL (psycopg2) из ``DATABASE_URL``. DSN не логируется."""
     url = os.getenv("DATABASE_URL", "postgresql://code9:code9@postgres:5432/code9")
     return asyncpg_to_psycopg2(url)
 

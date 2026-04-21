@@ -125,6 +125,12 @@ services:
       start_period: 30s
 
   # --- RQ worker: очереди crm/export/audit/ai/retention/billing ---
+  # Task #52.3 (Bug C): worker импортирует ``app.db.models.TenantBase``
+  # (для alembic target_metadata) и читает ``alembic.ini`` + tenant/env.py
+  # + tenant/versions. Монтируем ``apps/api`` read-only, чтобы
+  # bootstrap_tenant_schema мог выполнить tenant-template миграции.
+  # DSN-транслятор теперь inline в scripts/migrations/apply_tenant_template.py
+  # (не зависит от apps/api), но сам alembic конфиг/миграции — живут там.
   worker:
     build:
       context: ..
@@ -136,10 +142,11 @@ services:
       - ../.env.production
     environment:
       APP_ENV: production
-      PYTHONPATH: /app:/app/scripts:/packages/ai/src:/packages/crm-connectors/src
+      PYTHONPATH: /app:/app/scripts:/app/apps/api:/packages/ai/src:/packages/crm-connectors/src
     volumes:
       - ../packages:/packages:ro
       - ../scripts:/app/scripts:ro
+      - ../apps/api:/app/apps/api:ro
     depends_on:
       redis:
         condition: service_healthy
@@ -150,6 +157,9 @@ services:
     command: ["python", "-m", "worker.main"]
 
   # --- Scheduler: daily retention/billing jobs ---
+  # Task #52.3 (Bug C): зеркалит worker по монтированию apps/api + PYTHONPATH,
+  # т.к. scheduler запускает те же jobs (включая bootstrap_tenant_schema
+  # через retry/sweep пути в будущем).
   scheduler:
     build:
       context: ..
@@ -161,10 +171,11 @@ services:
       - ../.env.production
     environment:
       APP_ENV: production
-      PYTHONPATH: /app:/app/scripts:/packages/ai/src:/packages/crm-connectors/src
+      PYTHONPATH: /app:/app/scripts:/app/apps/api:/packages/ai/src:/packages/crm-connectors/src
     volumes:
       - ../packages:/packages:ro
       - ../scripts:/app/scripts:ro
+      - ../apps/api:/app/apps/api:ro
     depends_on:
       redis:
         condition: service_healthy
