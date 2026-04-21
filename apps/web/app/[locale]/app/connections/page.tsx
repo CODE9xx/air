@@ -31,14 +31,27 @@ export default function ConnectionsPage() {
   const locale = useLocale();
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { user } = useUserAuth();
+  const { user, ready } = useUserAuth();
   const { toast } = useToast();
-  const wsId = user?.workspaces?.[0]?.id ?? 'ws-demo-1';
+  // Task #52.4: НЕ подставляем синтетический 'ws-demo-1' fallback —
+  // он приводил к запросу `/workspaces/ws-demo-1/crm/connections`, который
+  // теперь (когда эндпойнт существует) отдал бы 422 Invalid UUID, а до
+  // фикса — 404 Not Found. Берём реальный workspace_id из user.workspaces[0].id.
+  // Три состояния:
+  //   !ready            → /auth/me ещё не завершился → skeleton
+  //   ready && !wsId    → user загружен, но нет workspace → empty state
+  //   ready && wsId     → фетч connections
+  const wsId = user?.workspaces?.[0]?.id ?? null;
+  const hasNoWorkspace = ready && !wsId;
 
   const [conns, setConns] = useState<CrmConnection[] | null>(null);
   const flashShown = useRef(false);
 
   useEffect(() => {
+    if (!wsId) {
+      // user ещё не подгрузился ИЛИ нет workspace — не дёргаем API.
+      return;
+    }
     (async () => {
       try {
         const res = await api.get<CrmConnection[]>(`/workspaces/${wsId}/crm/connections`);
@@ -90,7 +103,8 @@ export default function ConnectionsPage() {
         </Link>
       </header>
 
-      {conns === null && (
+      {/* 1) /auth/me ещё не завершился — skeleton */}
+      {!ready && (
         <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
           {[0, 1, 2].map((i) => (
             <Skeleton key={i} className="h-36" />
@@ -98,7 +112,26 @@ export default function ConnectionsPage() {
         </div>
       )}
 
-      {conns !== null && conns.length === 0 && (
+      {/* 2) user загружен, но нет workspace — empty state без кнопки
+           «Подключить CRM», т.к. подключаться некому. */}
+      {hasNoWorkspace && (
+        <EmptyState
+          title={t('noWorkspaceTitle')}
+          description={t('noWorkspaceBody')}
+        />
+      )}
+
+      {/* 3) wsId есть, но connections ещё не получены — skeleton */}
+      {ready && wsId && conns === null && (
+        <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {[0, 1, 2].map((i) => (
+            <Skeleton key={i} className="h-36" />
+          ))}
+        </div>
+      )}
+
+      {/* 4) получили [] — standard empty state с CTA */}
+      {ready && wsId && conns !== null && conns.length === 0 && (
         <EmptyState
           title={t('emptyTitle')}
           description={t('emptyBody')}
@@ -113,7 +146,8 @@ export default function ConnectionsPage() {
         />
       )}
 
-      {conns !== null && conns.length > 0 && (
+      {/* 5) получили список — карточки */}
+      {ready && wsId && conns !== null && conns.length > 0 && (
         <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
           {conns.map((c) => (
             <ConnectionCard key={c.id} conn={c} />

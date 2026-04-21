@@ -196,6 +196,8 @@
       "addFirst": "Подключить первую CRM",
       "emptyTitle": "Нет подключений",
       "emptyBody": "Начните с подключения amoCRM — это займёт 2 минуты",
+      "noWorkspaceTitle": "Нет доступного проекта",
+      "noWorkspaceBody": "Создайте проект.",
       "connectAmoCRM": "Подключить amoCRM (mock)",
       "chooseProvider": "Выберите CRM",
       "provider": "Провайдер",

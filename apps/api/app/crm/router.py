@@ -44,9 +44,19 @@ from app.db.models import (
     Job,
     User,
     Workspace,
+    WorkspaceMember,
 )
 
 router = APIRouter(prefix="/crm", tags=["crm"])
+
+# Workspace-scoped router (Task #52.4) — монтируется без prefix="/crm",
+# чтобы путь был абсолютным `/workspaces/{workspace_id}/crm/connections`
+# согласно CONTRACT.md. Фронт по-этому пути и ходит:
+# см. apps/web/app/[locale]/app/connections/page.tsx — api.get(
+# `/workspaces/${wsId}/crm/connections`). До #52.4 роут отсутствовал →
+# FastAPI отдавал 404, connection не показывался после рефреша.
+ws_crm_router = APIRouter(tags=["crm"])
+
 settings = get_settings()
 
 
@@ -128,6 +138,62 @@ async def list_connections(
     ws: Workspace = Depends(get_current_workspace),
     session: AsyncSession = Depends(get_session),
 ) -> list[dict[str, Any]]:
+    rows = (
+        await session.execute(
+            select(CrmConnection)
+            .where(CrmConnection.workspace_id == ws.id)
+            .where(CrmConnection.status != "deleted")
+            .order_by(CrmConnection.created_at.desc())
+        )
+    ).scalars().all()
+    return [_serialize_conn(c) for c in rows]
+
+
+# -------------------- Workspace-scoped list (CONTRACT.md, #52.4) --------------------
+
+@ws_crm_router.get("/workspaces/{workspace_id}/crm/connections")
+async def list_workspace_connections(
+    workspace_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> list[dict[str, Any]]:
+    """
+    Список CRM-подключений конкретного workspace (из CONTRACT.md).
+
+    Отдельный от ``GET /crm/connections`` путь, потому что фронт-кабинет
+    знает workspace_id из ``user.workspaces[0].id`` и бьёт сразу по
+    workspace-scoped path — без полагания на серверный ``get_current_workspace``
+    (который в будущем multi-workspace MVP станет неоднозначным).
+
+    Выборка идентична ``GET /crm/connections`` (owner или member ws,
+    все status != 'deleted' — active/pending/paused/failed включены;
+    external_button НЕ фильтруется). Возвращает 404 если workspace нет или
+    помечен deleted; 403 если юзер не owner и не в members.
+    """
+    ws = await session.get(Workspace, workspace_id)
+    if ws is None or ws.status == "deleted":
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"error": {"code": "not_found", "message": "Workspace not found"}},
+        )
+    if ws.owner_user_id != user.id:
+        member = (
+            await session.execute(
+                select(WorkspaceMember)
+                .where(WorkspaceMember.workspace_id == ws.id)
+                .where(WorkspaceMember.user_id == user.id)
+            )
+        ).scalar_one_or_none()
+        if member is None:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    "error": {
+                        "code": "forbidden",
+                        "message": "Not a workspace member",
+                    }
+                },
+            )
     rows = (
         await session.execute(
             select(CrmConnection)
