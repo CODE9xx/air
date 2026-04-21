@@ -43,6 +43,7 @@ from typing import Any, Iterable
 
 from sqlalchemy import text
 
+from ..lib.amocrm_creds import load_amocrm_oauth_credentials
 from ..lib.crypto import decrypt_token
 from ..lib.db import sync_session
 from ._common import (
@@ -118,13 +119,22 @@ def _normalize_email(raw: str | None) -> str | None:
 # ---------------------------------------------------------------------------
 
 def _fetch_connection_row(connection_id: str) -> dict[str, Any]:
-    """Читает нужные поля CrmConnection одним SELECT."""
+    """Читает нужные поля CrmConnection одним SELECT.
+
+    Task #52.3F (Bug F): добавлены поля ``amocrm_auth_mode`` +
+    ``amocrm_client_id`` + ``amocrm_client_secret_encrypted``, чтобы
+    ``load_amocrm_oauth_credentials`` мог резолвить per-installation
+    credentials для ``external_button`` connections (pre-#44.6
+    подключения остаются на env via ``static_client`` fallback).
+    """
     with sync_session() as sess:
         row = sess.execute(
             text(
                 "SELECT provider, status, tenant_schema, external_domain, "
                 "       access_token_encrypted, refresh_token_encrypted, "
-                "       token_expires_at "
+                "       token_expires_at, "
+                "       amocrm_auth_mode, amocrm_client_id, "
+                "       amocrm_client_secret_encrypted "
                 "FROM crm_connections "
                 "WHERE id = CAST(:cid AS UUID)"
             ),
@@ -140,6 +150,9 @@ def _fetch_connection_row(connection_id: str) -> dict[str, Any]:
         "access_token_encrypted": row[4],
         "refresh_token_encrypted": row[5],
         "token_expires_at": row[6],
+        "amocrm_auth_mode": row[7],
+        "amocrm_client_id": row[8],
+        "amocrm_client_secret_encrypted": row[9],
     }
 
 
@@ -553,10 +566,15 @@ def pull_amocrm_core(
 
         from crm_connectors.amocrm import AmoCrmConnector  # type: ignore
 
-        client_id = os.getenv("AMOCRM_CLIENT_ID", "")
-        client_secret = os.getenv("AMOCRM_CLIENT_SECRET", "")
-        if not client_id or not client_secret:
-            raise RuntimeError("AMOCRM_CLIENT_ID / AMOCRM_CLIENT_SECRET не заданы в worker env.")
+        # Task #52.3F (Bug F): OAuth-credentials теперь резолвятся по
+        # ``crm_connections.amocrm_auth_mode``. Для ``external_button`` —
+        # per-installation из БД (#44.6), для ``static_client`` / legacy —
+        # env AMOCRM_CLIENT_ID/SECRET. Fallback на env для external_button
+        # запрещён (см. load_amocrm_oauth_credentials): это предотвращает
+        # утечку глобальных creds в чужой аккаунт.
+        client_id, client_secret = load_amocrm_oauth_credentials(
+            conn_info, connection_id=connection_id
+        )
 
         connector = AmoCrmConnector(
             client_id=client_id,

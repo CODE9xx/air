@@ -23,6 +23,7 @@ from typing import Any
 
 from sqlalchemy import text
 
+from ..lib.amocrm_creds import load_amocrm_oauth_credentials
 from ..lib.crypto import decrypt_token, encrypt_token
 from ..lib.db import sync_session
 from ._common import (
@@ -137,9 +138,15 @@ def refresh_token(
     mark_job_running(job_row_id)
     try:
         with sync_session() as sess:
+            # Task #52.3F (Bug F): добавлены ``amocrm_auth_mode`` +
+            # ``amocrm_client_id`` + ``amocrm_client_secret_encrypted`` —
+            # для external_button рефреш должен использовать
+            # per-installation creds, не глобальный env.
             row = sess.execute(
                 text(
-                    "SELECT refresh_token_encrypted, status, provider, external_domain "
+                    "SELECT refresh_token_encrypted, status, provider, external_domain, "
+                    "       amocrm_auth_mode, amocrm_client_id, "
+                    "       amocrm_client_secret_encrypted "
                     "FROM crm_connections WHERE id = CAST(:cid AS UUID)"
                 ),
                 {"cid": connection_id},
@@ -147,7 +154,15 @@ def refresh_token(
             if row is None:
                 raise RuntimeError(f"connection {connection_id} не найден")
 
-        encrypted_refresh, status, provider, external_domain = row
+        (
+            encrypted_refresh,
+            status,
+            provider,
+            external_domain,
+            amocrm_auth_mode,
+            amocrm_client_id_col,
+            amocrm_client_secret_encrypted,
+        ) = row
 
         if MOCK_CRM_MODE:
             new_expiry = datetime.now(timezone.utc) + timedelta(days=30)
@@ -201,14 +216,19 @@ def refresh_token(
             TokenExpired,
         )
 
-        client_id = os.getenv("AMOCRM_CLIENT_ID", "")
-        client_secret = os.getenv("AMOCRM_CLIENT_SECRET", "")
-        if not client_id or not client_secret:
-            # Конфиг ошибка — не превращаем в lost_token, чтобы не снести токены
-            # пользователей. Падаем — оператор увидит.
-            raise RuntimeError(
-                "AMOCRM_CLIENT_ID / AMOCRM_CLIENT_SECRET не заданы в worker env."
-            )
+        # Task #52.3F (Bug F): резолвим credentials через helper —
+        # external_button → per-installation из БД, static_client/NULL →
+        # env AMOCRM_CLIENT_ID/SECRET. Ошибки helper'а (missing / decrypt
+        # fail / env empty) пробрасываются — НЕ превращаем в lost_token,
+        # иначе config-misstep снёс бы токены пользователей.
+        client_id, client_secret = load_amocrm_oauth_credentials(
+            {
+                "amocrm_auth_mode": amocrm_auth_mode,
+                "amocrm_client_id": amocrm_client_id_col,
+                "amocrm_client_secret_encrypted": amocrm_client_secret_encrypted,
+            },
+            connection_id=connection_id,
+        )
 
         old_refresh = decrypt_token(encrypted_refresh)
         connector = AmoCrmConnector(
