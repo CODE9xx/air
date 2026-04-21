@@ -112,6 +112,32 @@ def _sync_url() -> str:
     return asyncpg_to_psycopg2(url)
 
 
+def _escape_pct_for_configparser(url: str) -> str:
+    """Double-percent для Alembic ``Config.set_main_option``.
+
+    Bug E (Task #52.3E, обнаружен 2026-04-21 в live-recovery после фикса Bug D)
+    -----------------------------------------------------------------------
+    ``Config.set_main_option`` делегирует в stdlib ``ConfigParser`` с
+    ``BasicInterpolation``. URL-encoded символы в DB-паролях (``%40`` = ``@``,
+    ``%7C`` = ``|``, ``%3E`` = ``>``, ``%23`` = ``#``, ``%3B`` = ``;`` и т.п.)
+    трактуются как префикс подстановки и вызывают
+    ``ValueError: invalid interpolation syntax in '<FULL DSN>' at position N``.
+
+    **Критично**: сообщение исключения содержит **полный DSN вместе с
+    паролем** — это значит, что падение утекает секрет в worker stderr,
+    docker-логи и RQ ``exc_info`` в Redis. Поэтому одновременно с escape
+    мы оборачиваем вызовы в try/except и переписываем traceback на безопасное
+    сообщение без DSN (см. ``apply_tenant_template`` ниже).
+
+    Контракт: ``ConfigParser`` разэкранирует ``%%`` обратно в ``%`` на
+    ``get_main_option`` / ``get_section`` — т.е. потребитель (``env.py``)
+    получит DSN в исходном виде без дополнительных преобразований.
+
+    Контрактные тесты: ``tests/api/test_apply_tenant_template_escape.py``.
+    """
+    return url.replace("%", "%%")
+
+
 def _validate_schema_name(schema: str) -> None:
     if not _SCHEMA_RE.fullmatch(schema):
         raise ValueError(f"Невалидное имя tenant-схемы: {schema!r}")
@@ -139,7 +165,8 @@ def _alembic_tenant_config(schema: str) -> Config:
     # API alembic принимает x_argument только через CLI. Для программного
     # вызова используем private-атрибут: config.cmd_opts не всегда есть.
     # Простое решение: установим глобальный x через config.
-    cfg.set_main_option("sqlalchemy.url", _sync_url())
+    # Bug E: escape '%' для ConfigParser, см. _escape_pct_for_configparser.
+    cfg.set_main_option("sqlalchemy.url", _escape_pct_for_configparser(_sync_url()))
     return cfg
 
 
@@ -153,7 +180,21 @@ def apply_tenant_template(schema: str) -> None:
     ensure_schema(schema)
 
     cfg = Config(str(_ALEMBIC_INI), ini_section="tenant")
-    cfg.set_main_option("sqlalchemy.url", _sync_url())
+    # Bug E (Task #52.3E): escape '%' для ConfigParser + defence-in-depth:
+    # если экранирование не сработает (напр., новое поведение ConfigParser),
+    # ``set_main_option`` бросит ValueError с **полным DSN в тексте**. Ловим и
+    # переписываем на безопасное сообщение, чтобы DSN не попал в логи/Redis.
+    try:
+        cfg.set_main_option(
+            "sqlalchemy.url", _escape_pct_for_configparser(_sync_url())
+        )
+    except ValueError:
+        # ``from None`` подавляет оригинальный traceback (он содержит DSN).
+        raise RuntimeError(
+            "apply_tenant_template: не удалось сконфигурировать Alembic DSN "
+            "(ConfigParser interpolation, Bug E). Оригинальное исключение "
+            "подавлено для защиты секретов."
+        ) from None
     # Alembic поддерживает -x через config.attributes["x"] если вызывать
     # command API с **{ "x": ["schema=..."] }**, но самый простой путь —
     # modify CLI-args через config.cmd_opts. Проще: monkey-patch context
