@@ -80,13 +80,26 @@ def enqueue(
     # Функция воркера будет опознана по строковому пути.
     module = JOB_KIND_TO_MODULE.get(kind, queue_name)
     func_path = f"worker.jobs.{module}.{kind}"
+    # Bug D (Task #52.3D, обнаружен в live-прогоне #52.3 после фикса Bug C):
+    # ранее использовалось ``queue.enqueue(func_path, payload, **enqueue_kwargs)``,
+    # что заставляло RQ класть payload dict как ПЕРВЫЙ ПОЗИЦИОННЫЙ аргумент
+    # в worker-функцию. Все worker-jobs имеют сигнатуру
+    # ``def job(<entity>_id: str, *, ...)``, и dict попадал на место
+    # ``connection_id``/``workspace_id``/``billing_account_id``/``text_in``,
+    # что ломалось либо на psycopg2 ``can't adapt type 'dict'``, либо
+    # глубже в функции. Правильный API — ``queue.enqueue_call`` с явным
+    # ``kwargs=payload``: RQ распаковывает dict как kwargs, имена совпадают
+    # с параметрами функции (см. signature inventory в tests/api/test_jobs_enqueue.py).
+    #
     # fallback: если worker не поднят — создаём RQ job id всё равно,
     # чтобы API не падал. Sync Redis операция, дешёвая.
     try:
         enqueue_kwargs: dict[str, Any] = {"job_id": str(uuid.uuid4())}
         if depends_on:
             enqueue_kwargs["depends_on"] = depends_on
-        job = queue.enqueue(func_path, payload, **enqueue_kwargs)
+        job = queue.enqueue_call(
+            func=func_path, kwargs=payload, **enqueue_kwargs
+        )
         return job.id
     except Exception:
         # В dev worker может отсутствовать. Возвращаем фиктивный id —
