@@ -16,7 +16,9 @@ CRM pull jobs (Phase 2A step 5).
    внутри tenant-schema (search_path trick — как в ``trial_export``).
 6. Ведёт in-memory маппинг ``external_id → tenant UUID`` для разрешения FK
    (stage→pipeline, deal→contact/company/user/pipeline/stage, contact→user).
-7. Обновляет ``CrmConnection.last_sync_at`` и кладёт сводку в ``metadata_json``.
+7. Обновляет ``CrmConnection.last_sync_at`` и кладёт сводку в колонку
+   ``metadata`` (ORM-атрибут ``CrmConnection.metadata_json`` через
+   ``Column("metadata", JSONB, ...)``; в raw SQL — реальное имя колонки).
 8. Enqueue-ит ``run_audit_report`` после успешного pull'а.
 
 Безопасность:
@@ -632,6 +634,13 @@ def pull_amocrm_core(
             counts["deals"] = deals_count
 
         # Обновляем метаданные CrmConnection.
+        # Bug G (#52.3G): реальное имя колонки в БД — ``metadata`` (см.
+        # ``CrmConnection.metadata_json = Column("metadata", JSONB, ...)``;
+        # ORM-атрибут переименован, т.к. SQLAlchemy резервирует ``metadata``
+        # у declarative base). Raw ``text()``-SQL обходит ORM-маппинг, поэтому
+        # здесь используем реальное имя колонки — ``metadata``, а НЕ
+        # ``metadata_json``. Регрессия покрыта в
+        # ``tests/api/test_crm_pull_metadata_sql_column.py``.
         import json
         with sync_session() as sess:
             sess.execute(
@@ -639,7 +648,7 @@ def pull_amocrm_core(
                     "UPDATE crm_connections SET "
                     "  last_sync_at = NOW(), "
                     "  updated_at = NOW(), "
-                    "  metadata_json = COALESCE(metadata_json, '{}'::jsonb) "
+                    "  metadata = COALESCE(metadata, '{}'::jsonb) "
                     "    || CAST(:patch AS JSONB) "
                     "WHERE id = CAST(:cid AS UUID)"
                 ),
