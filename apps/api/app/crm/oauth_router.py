@@ -155,38 +155,47 @@ async def oauth_start(
         session.add(conn)
         await session.flush()
 
+        # Task #52.6: создаём Job rows СНАЧАЛА, flush() чтобы получить
+        # job.id (server_default gen_random_uuid()), потом enqueue с
+        # job_row_id — иначе worker.mark_job_* тихо no-op'ит по None.
+        bootstrap_payload = {"connection_id": str(conn.id)}
+        bootstrap_job = Job(
+            workspace_id=ws.id,
+            crm_connection_id=conn.id,
+            kind="bootstrap_tenant_schema",
+            queue=queue_for_kind("bootstrap_tenant_schema"),
+            status="queued",
+            payload=bootstrap_payload,
+        )
+        session.add(bootstrap_job)
+        await session.flush()
         bootstrap_rq_id = enqueue(
-            "bootstrap_tenant_schema", {"connection_id": str(conn.id)}
+            "bootstrap_tenant_schema",
+            bootstrap_payload,
+            job_row_id=str(bootstrap_job.id),
         )
-        session.add(
-            Job(
-                workspace_id=ws.id,
-                crm_connection_id=conn.id,
-                kind="bootstrap_tenant_schema",
-                queue=queue_for_kind("bootstrap_tenant_schema"),
-                status="queued",
-                payload={"connection_id": str(conn.id)},
-                rq_job_id=bootstrap_rq_id,
-            )
-        )
+        bootstrap_job.rq_job_id = bootstrap_rq_id
 
         # Mock: цепочка bootstrap → pull_amocrm_core (в mock-режиме
         # pull делегирует в trial_export → audit, полная UX-параллель с prod).
         pull_payload = {"connection_id": str(conn.id), "first_pull": True}
+        pull_job = Job(
+            workspace_id=ws.id,
+            crm_connection_id=conn.id,
+            kind="pull_amocrm_core",
+            queue=queue_for_kind("pull_amocrm_core"),
+            status="queued",
+            payload=pull_payload,
+        )
+        session.add(pull_job)
+        await session.flush()
         pull_rq_id = enqueue(
-            "pull_amocrm_core", pull_payload, depends_on=bootstrap_rq_id
+            "pull_amocrm_core",
+            pull_payload,
+            depends_on=bootstrap_rq_id,
+            job_row_id=str(pull_job.id),
         )
-        session.add(
-            Job(
-                workspace_id=ws.id,
-                crm_connection_id=conn.id,
-                kind="pull_amocrm_core",
-                queue=queue_for_kind("pull_amocrm_core"),
-                status="queued",
-                payload=pull_payload,
-                rq_job_id=pull_rq_id,
-            )
-        )
+        pull_job.rq_job_id = pull_rq_id
         await session.commit()
 
         return {
@@ -629,20 +638,27 @@ async def oauth_callback(
     # 8) Enqueue bootstrap_tenant_schema → pull_amocrm_core (dependency chain).
     #    Phase 2A: после bootstrap сразу стартует first-pull 4 ядер.
     #    pull_amocrm_core сам enqueue-ит audit после успешного завершения.
+    #
+    # Task #52.6: Job row создаётся ПЕРЕД enqueue, с flush() для получения
+    # server-defaulted id; затем enqueue получает job_row_id — без этого
+    # worker.mark_job_* silently no-op'ит и status навсегда застревает в queued.
+    bootstrap_payload = {"connection_id": str(conn.id)}
+    bootstrap_job = Job(
+        workspace_id=workspace_id,
+        crm_connection_id=conn.id,
+        kind="bootstrap_tenant_schema",
+        queue=queue_for_kind("bootstrap_tenant_schema"),
+        status="queued",
+        payload=bootstrap_payload,
+    )
+    session.add(bootstrap_job)
+    await session.flush()
     bootstrap_rq_id = enqueue(
-        "bootstrap_tenant_schema", {"connection_id": str(conn.id)}
+        "bootstrap_tenant_schema",
+        bootstrap_payload,
+        job_row_id=str(bootstrap_job.id),
     )
-    session.add(
-        Job(
-            workspace_id=workspace_id,
-            crm_connection_id=conn.id,
-            kind="bootstrap_tenant_schema",
-            queue=queue_for_kind("bootstrap_tenant_schema"),
-            status="queued",
-            payload={"connection_id": str(conn.id)},
-            rq_job_id=bootstrap_rq_id,
-        )
-    )
+    bootstrap_job.rq_job_id = bootstrap_rq_id
 
     # Phase 2A scope-lock: first pull ограничен 100 последними сделками.
     # deals_limit прокидывается до _pull_deals → connector.fetch_deals(..., limit=...)
@@ -652,20 +668,23 @@ async def oauth_callback(
         "first_pull": True,
         "deals_limit": 100,
     }
+    pull_job = Job(
+        workspace_id=workspace_id,
+        crm_connection_id=conn.id,
+        kind="pull_amocrm_core",
+        queue=queue_for_kind("pull_amocrm_core"),
+        status="queued",
+        payload=pull_payload,
+    )
+    session.add(pull_job)
+    await session.flush()
     pull_rq_id = enqueue(
-        "pull_amocrm_core", pull_payload, depends_on=bootstrap_rq_id
+        "pull_amocrm_core",
+        pull_payload,
+        depends_on=bootstrap_rq_id,
+        job_row_id=str(pull_job.id),
     )
-    session.add(
-        Job(
-            workspace_id=workspace_id,
-            crm_connection_id=conn.id,
-            kind="pull_amocrm_core",
-            queue=queue_for_kind("pull_amocrm_core"),
-            status="queued",
-            payload=pull_payload,
-            rq_job_id=pull_rq_id,
-        )
-    )
+    pull_job.rq_job_id = pull_rq_id
 
     await session.commit()
     logger.info(

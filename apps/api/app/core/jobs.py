@@ -61,6 +61,7 @@ def enqueue(
     payload: dict[str, Any],
     *,
     depends_on: str | None = None,
+    job_row_id: str | None = None,
 ) -> str:
     """
     Ставит job в очередь по kind.
@@ -72,6 +73,23 @@ def enqueue(
 
     ``depends_on`` — rq_job_id другого job'а, после успешного выполнения которого
     запустится текущий (Phase 2A: bootstrap_tenant_schema → pull_amocrm_core).
+
+    ``job_row_id`` — UUID записи в ``public.jobs``. Если передан, попадает
+    в worker kwargs под ключом ``job_row_id``; воркер использует его
+    в ``mark_job_running``/``mark_job_succeeded``/``mark_job_failed``
+    для обновления ``public.jobs.status`` и ``result``/``error``.
+
+    **Важно (Task #52.6):** ``job_row_id`` кладётся ТОЛЬКО в worker kwargs,
+    переданные в RQ (через shallow copy ``payload``). Исходный ``payload``
+    dict не мутируется — вызывающий код хранит его в ``public.jobs.payload``
+    в исходном виде (без ``job_row_id``, чтобы не дублировать id в двух
+    колонках). Контракт зафиксирован в
+    ``tests/api/test_jobs_enqueue.py``.
+
+    До Task #52.6 ``enqueue()`` не принимал ``job_row_id``, воркер получал
+    ``job_row_id=None`` через default, и ``mark_job_*`` тихо no-op'ил
+    (``if not job_row_id: return``) — статус в ``public.jobs`` вечно
+    болтался в ``queued``.
     """
     queue_name = JOB_KIND_TO_QUEUE.get(kind)
     if queue_name is None:
@@ -94,11 +112,16 @@ def enqueue(
     # fallback: если worker не поднят — создаём RQ job id всё равно,
     # чтобы API не падал. Sync Redis операция, дешёвая.
     try:
+        # Shallow copy: добавляем job_row_id только в worker-kwargs,
+        # не трогая исходный payload (он идёт в public.jobs.payload как есть).
+        worker_kwargs: dict[str, Any] = dict(payload)
+        if job_row_id is not None:
+            worker_kwargs["job_row_id"] = job_row_id
         enqueue_kwargs: dict[str, Any] = {"job_id": str(uuid.uuid4())}
         if depends_on:
             enqueue_kwargs["depends_on"] = depends_on
         job = queue.enqueue_call(
-            func=func_path, kwargs=payload, **enqueue_kwargs
+            func=func_path, kwargs=worker_kwargs, **enqueue_kwargs
         )
         return job.id
     except Exception:
