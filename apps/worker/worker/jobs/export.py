@@ -318,6 +318,26 @@ def build_export_zip(
     connection_id: str,
     *,
     job_row_id: str | None = None,
+    trial: bool = False,
 ) -> dict[str, Any]:
-    """Zip-сборка экспорта (стаб-алиас full_export)."""
+    """
+    Router-dispatcher для export jobs (JobKind.BUILD_EXPORT_ZIP).
+
+    Task #52.5: API-роут ``POST /crm/connections/{id}/trial-export``
+    enqueue'ит этот kind с ``trial=True`` (см. apps/api/app/crm/router.py).
+    Раньше build_export_zip не принимал ``trial`` → при enqueue_call
+    (``kwargs=payload``, Task #52.3D) RQ падал с
+    ``TypeError: build_export_zip() got an unexpected keyword argument 'trial'``.
+
+    Теперь:
+      - ``trial=True``  → ``trial_export`` (создаёт 100 mock deals +
+        pipelines/stages/users/companies/contacts в tenant schema).
+      - ``trial=False`` (default, ``POST .../full-export`` и все legacy-вызовы
+        без kwarg) → ``full_export`` (пока stub; реальная zip-сборка — V1).
+
+    Оба бранча совместимы с существующим ``JobKind.BUILD_EXPORT_ZIP`` —
+    отдельный kind/миграция для trial не нужны.
+    """
+    if trial:
+        return trial_export(connection_id=connection_id, job_row_id=job_row_id)
     return full_export(connection_id=connection_id, job_row_id=job_row_id)
