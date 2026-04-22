@@ -37,7 +37,11 @@ export default function ConnectionDetailPage() {
   const searchParams = useSearchParams();
   const { toast } = useToast();
   const { user } = useUserAuth();
-  const wsId = user?.workspaces?.[0]?.id ?? 'ws-demo-1';
+  // Task #52.4 follow-up: НЕ подставляем синтетический 'ws-demo-1'.
+  // wsId здесь нужен только для startTrialExport (POST /workspaces/{ws}/export/jobs).
+  // Чтение connection-данных идёт через /crm/connections/{id} и от wsId не зависит,
+  // поэтому страница рендерится корректно даже без workspace.
+  const wsId = user?.workspaces?.[0]?.id ?? null;
   const id = params?.id;
 
   const [conn, setConn] = useState<CrmConnection | null>(null);
@@ -91,6 +95,11 @@ export default function ConnectionDetailPage() {
 
   const startTrialExport = async () => {
     if (!conn) return;
+    if (!wsId) {
+      // Без workspace экспорт некуда — не дёргаем API с синтетическим id.
+      toast({ kind: 'error', title: tCommon('error') });
+      return;
+    }
     try {
       await api.post(`/workspaces/${wsId}/export/jobs`, {
         crm_connection_id: conn.id,
