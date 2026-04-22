@@ -113,11 +113,19 @@ def test_trial_export_handler_enqueues_build_export_zip_with_trial_true() -> Non
 
 def test_trial_export_endpoint_path_matches_frontend_contract() -> None:
     """
-    Contract: POST /connections/{connection_id}/trial-export в crm-router.
+    Contract: POST /crm/connections/{connection_id}/trial-export в crm-router.
+
+    crm_router создан с ``APIRouter(prefix="/crm", ...)`` — поэтому
+    route.path на уровне роутера уже содержит ``/crm/...``. Ещё один
+    уровень префикса (``/api/v1``) добавляется при include_router в
+    ``app.main``; здесь мы проверяем только router-level invariant,
+    чтобы тест не зависел от того, как главное приложение монтируется.
 
     Фронт (apps/web/app/[locale]/app/connections/[id]/page.tsx,
-    функция startTrialExport) делает POST на этот путь без тела.
-    Если кто-то переименует — фронт получит 404 (тот самый баг #52.5).
+    функция startTrialExport) делает POST на
+    ``/api/v1/crm/connections/{id}/trial-export`` без тела.
+    Если кто-то переименует router-часть — фронт получит 404
+    (тот самый баг #52.5).
     """
     from app.crm.router import router as crm_router
 
@@ -126,7 +134,7 @@ def test_trial_export_endpoint_path_matches_frontend_contract() -> None:
         for route in crm_router.routes
         if hasattr(route, "path")
     ]
-    expected = "/connections/{connection_id}/trial-export"
+    expected = "/crm/connections/{connection_id}/trial-export"
     assert any(
         p == expected and "POST" in methods for p, methods in paths
     ), (
@@ -136,12 +144,17 @@ def test_trial_export_endpoint_path_matches_frontend_contract() -> None:
 
 
 def test_trial_export_returns_202_accepted() -> None:
-    """Contract: handler декорирован status_code=HTTP_202_ACCEPTED."""
+    """Contract: handler декорирован status_code=HTTP_202_ACCEPTED.
+
+    См. comment в test_trial_export_endpoint_path_matches_frontend_contract
+    про router-level префикс ``/crm``.
+    """
     from app.crm.router import router as crm_router
 
+    target = "/crm/connections/{connection_id}/trial-export"
     for route in crm_router.routes:
         if (
-            getattr(route, "path", "") == "/connections/{connection_id}/trial-export"
+            getattr(route, "path", "") == target
             and "POST" in (route.methods or set())
         ):
             assert route.status_code == 202, (
@@ -149,7 +162,7 @@ def test_trial_export_returns_202_accepted() -> None:
                 f"{route.status_code}."
             )
             return
-    pytest.fail("POST /connections/{connection_id}/trial-export route not found")
+    pytest.fail(f"POST {target} route not found")
 
 
 def test_trial_export_payload_keys_match_worker_signature() -> None:
