@@ -62,10 +62,15 @@ async def ai_analyze(
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     conn = await _resolve_conn(session, user, connection_id)
-    # В stored payload кладём "mock": True как marker, worker получает
-    # только connection_id (см. worker.jobs.ai.analyze_conversation signature).
+    # worker.jobs.ai.analyze_conversation(workspace_id, *, connection_id=None, ...)
+    # требует workspace_id позиционно — enqueue() распаковывает payload как kwargs,
+    # поэтому ключ должен присутствовать, иначе TypeError на worker pickup.
+    # db_payload хранится в public.jobs.payload с "mock": True как marker.
     db_payload = {"connection_id": str(conn.id), "mock": True}
-    worker_payload = {"connection_id": str(conn.id)}
+    worker_payload = {
+        "workspace_id": str(conn.workspace_id),
+        "connection_id": str(conn.id),
+    }
     job = Job(
         workspace_id=conn.workspace_id,
         crm_connection_id=conn.id,
