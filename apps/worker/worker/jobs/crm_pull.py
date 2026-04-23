@@ -216,13 +216,23 @@ def _uuid() -> str:
 # UPSERT helpers
 # ---------------------------------------------------------------------------
 
-def _upsert_raw(sess, table: str, external_id: str, payload: dict[str, Any]) -> None:
-    """UPSERT в raw_<entity>: (external_id UNIQUE) → refresh payload + fetched_at."""
+def _upsert_raw(
+    sess, schema: str, table: str, external_id: str, payload: dict[str, Any]
+) -> None:
+    """UPSERT в ``"<schema>".raw_<entity>``: (external_id UNIQUE) → refresh payload.
+
+    Task #52.7: schema qualified explicitly — не полагаемся только на
+    ``SET LOCAL search_path``. В проде наблюдалась потеря search_path
+    между execute'ами (см. docstring ``trial_export``), INSERT падал с
+    ``UndefinedTable``. Schema — строго валидированный идентификатор,
+    инъекция исключена на уровне ``_validate_schema_name`` в
+    ``apply_tenant_template``.
+    """
     import json
 
     sess.execute(
         text(
-            f"INSERT INTO {table}(id, external_id, payload, fetched_at) "
+            f'INSERT INTO "{schema}".{table}(id, external_id, payload, fetched_at) '
             f"VALUES (CAST(:id AS UUID), :ext, CAST(:payload AS JSONB), NOW()) "
             f"ON CONFLICT (external_id) DO UPDATE SET "
             f"  payload = EXCLUDED.payload, fetched_at = NOW()"
@@ -239,24 +249,27 @@ def _upsert_raw(sess, table: str, external_id: str, payload: dict[str, Any]) -> 
 # Pull stages
 # ---------------------------------------------------------------------------
 
-def _pull_pipelines(sess, connector, access_token: str) -> dict[str, str]:
+def _pull_pipelines(
+    sess, connector, access_token: str, *, schema: str
+) -> dict[str, str]:
     """
     Тянет воронки. Возвращает маппинг external_id → tenant UUID.
     Используется downstream для stage.pipeline_id и deal.pipeline_id.
     """
     ext_to_uuid: dict[str, str] = {}
+    q_schema = f'"{schema}"'
 
     for raw_p in connector.fetch_pipelines(access_token):
         ext_id = raw_p.crm_id
         if not ext_id:
             continue
-        _upsert_raw(sess, "raw_pipelines", ext_id, raw_p.raw_payload)
+        _upsert_raw(sess, schema, "raw_pipelines", ext_id, raw_p.raw_payload)
 
         # UPSERT normalized. ON CONFLICT возвращает id — используем RETURNING.
         tenant_uuid = _uuid()
         result = sess.execute(
             text(
-                "INSERT INTO pipelines(id, external_id, name, is_default, fetched_at) "
+                f"INSERT INTO {q_schema}.pipelines(id, external_id, name, is_default, fetched_at) "
                 "VALUES (CAST(:id AS UUID), :ext, :name, :def, NOW()) "
                 "ON CONFLICT (external_id) DO UPDATE SET "
                 "  name = EXCLUDED.name, is_default = EXCLUDED.is_default, fetched_at = NOW() "
@@ -276,10 +289,16 @@ def _pull_pipelines(sess, connector, access_token: str) -> dict[str, str]:
 
 
 def _pull_stages(
-    sess, connector, access_token: str, pipeline_map: dict[str, str]
+    sess,
+    connector,
+    access_token: str,
+    pipeline_map: dict[str, str],
+    *,
+    schema: str,
 ) -> dict[str, str]:
     """Тянет этапы всех воронок. Возвращает маппинг external_id → tenant UUID."""
     ext_to_uuid: dict[str, str] = {}
+    q_schema = f'"{schema}"'
 
     for raw_s in connector.fetch_stages(access_token):
         ext_id = raw_s.crm_id
@@ -290,12 +309,12 @@ def _pull_stages(
             # amoCRM не должен слать статус без pipeline, но на всякий пропустим.
             continue
 
-        _upsert_raw(sess, "raw_stages", ext_id, raw_s.raw_payload)
+        _upsert_raw(sess, schema, "raw_stages", ext_id, raw_s.raw_payload)
 
         tenant_uuid = _uuid()
         result = sess.execute(
             text(
-                "INSERT INTO stages(id, external_id, pipeline_id, name, sort_order, kind, fetched_at) "
+                f"INSERT INTO {q_schema}.stages(id, external_id, pipeline_id, name, sort_order, kind, fetched_at) "
                 "VALUES (CAST(:id AS UUID), :ext, CAST(:pid AS UUID), :name, :sort, :kind, NOW()) "
                 "ON CONFLICT (external_id) DO UPDATE SET "
                 "  pipeline_id = EXCLUDED.pipeline_id, name = EXCLUDED.name, "
@@ -317,22 +336,25 @@ def _pull_stages(
     return ext_to_uuid
 
 
-def _pull_users(sess, connector, access_token: str) -> dict[str, str]:
+def _pull_users(
+    sess, connector, access_token: str, *, schema: str
+) -> dict[str, str]:
     """Тянет CRM-пользователей (менеджеров). Маппинг external_id → UUID."""
     ext_to_uuid: dict[str, str] = {}
+    q_schema = f'"{schema}"'
 
     for raw_u in connector.fetch_users(access_token):
         ext_id = raw_u.crm_id
         if not ext_id:
             continue
-        _upsert_raw(sess, "raw_users", ext_id, raw_u.raw_payload)
+        _upsert_raw(sess, schema, "raw_users", ext_id, raw_u.raw_payload)
 
         email_hash = _hash_pii(_normalize_email(raw_u.email))
 
         tenant_uuid = _uuid()
         result = sess.execute(
             text(
-                "INSERT INTO crm_users(id, external_id, full_name, email_hash, role, is_active, fetched_at) "
+                f"INSERT INTO {q_schema}.crm_users(id, external_id, full_name, email_hash, role, is_active, fetched_at) "
                 "VALUES (CAST(:id AS UUID), :ext, :name, :eh, :role, :active, NOW()) "
                 "ON CONFLICT (external_id) DO UPDATE SET "
                 "  full_name = EXCLUDED.full_name, email_hash = EXCLUDED.email_hash, "
@@ -360,15 +382,18 @@ def _pull_contacts(
     access_token: str,
     user_map: dict[str, str],
     limit: int | None,
+    *,
+    schema: str,
 ) -> dict[str, str]:
     """Тянет контакты. Маппинг external_id → UUID. FK responsible_user_id → crm_users."""
     ext_to_uuid: dict[str, str] = {}
+    q_schema = f'"{schema}"'
 
     for raw_c in connector.fetch_contacts(access_token, limit=limit):
         ext_id = raw_c.crm_id
         if not ext_id:
             continue
-        _upsert_raw(sess, "raw_contacts", ext_id, raw_c.raw_payload)
+        _upsert_raw(sess, schema, "raw_contacts", ext_id, raw_c.raw_payload)
 
         phone_hash = _hash_pii(_normalize_phone(raw_c.phone))
         email_hash = _hash_pii(_normalize_email(raw_c.email))
@@ -377,7 +402,7 @@ def _pull_contacts(
         tenant_uuid = _uuid()
         result = sess.execute(
             text(
-                "INSERT INTO contacts(id, external_id, full_name, phone_primary_hash, "
+                f"INSERT INTO {q_schema}.contacts(id, external_id, full_name, phone_primary_hash, "
                 "                     email_primary_hash, responsible_user_id, "
                 "                     created_at_external, fetched_at) "
                 "VALUES (CAST(:id AS UUID), :ext, :name, :ph, :eh, "
@@ -417,6 +442,7 @@ def _pull_deals(
     contact_map: dict[str, str],
     since: datetime | None,
     limit: int | None,
+    schema: str,
 ) -> int:
     """
     Тянет сделки. Возвращает количество обработанных сделок.
@@ -424,11 +450,12 @@ def _pull_deals(
     Компании пока не поднимаем (Phase 2B) → company_id=NULL.
     """
     processed = 0
+    q_schema = f'"{schema}"'
     for raw_d in connector.fetch_deals(access_token, since=since, limit=limit):
         ext_id = raw_d.crm_id
         if not ext_id:
             continue
-        _upsert_raw(sess, "raw_deals", ext_id, raw_d.raw_payload)
+        _upsert_raw(sess, schema, "raw_deals", ext_id, raw_d.raw_payload)
 
         pipeline_uuid = pipeline_map.get(raw_d.pipeline_id) if raw_d.pipeline_id else None
         stage_uuid = stage_map.get(raw_d.stage_id) if raw_d.stage_id else None
@@ -442,7 +469,7 @@ def _pull_deals(
 
         sess.execute(
             text(
-                "INSERT INTO deals(id, external_id, name, pipeline_id, stage_id, status, "
+                f"INSERT INTO {q_schema}.deals(id, external_id, name, pipeline_id, stage_id, status, "
                 "                  responsible_user_id, contact_id, company_id, price_cents, currency, "
                 "                  created_at_external, updated_at_external, closed_at_external, fetched_at) "
                 "VALUES (CAST(:id AS UUID), :ext, :name, "
@@ -599,6 +626,10 @@ def pull_amocrm_core(
         counts: dict[str, int] = {}
 
         with sync_session() as sess:
+            # Task #52.7: schema qualified в каждом INSERT внутри _pull_*
+            # (см. ``_upsert_raw`` / _pull_pipelines / _pull_stages / _pull_users /
+            # _pull_contacts / _pull_deals). SET LOCAL оставлен как
+            # belt-and-suspenders для возможных будущих raw SQL-statement'ов.
             sess.execute(text(f"SET LOCAL search_path = {q_schema}, public"))
 
             logger.info(
@@ -606,17 +637,19 @@ def pull_amocrm_core(
                 extra={"connection_id": connection_id, "schema": schema, "first_pull": first_pull},
             )
 
-            pipeline_map = _pull_pipelines(sess, connector, access_token)
+            pipeline_map = _pull_pipelines(sess, connector, access_token, schema=schema)
             counts["pipelines"] = len(pipeline_map)
 
-            stage_map = _pull_stages(sess, connector, access_token, pipeline_map)
+            stage_map = _pull_stages(
+                sess, connector, access_token, pipeline_map, schema=schema
+            )
             counts["stages"] = len(stage_map)
 
-            user_map = _pull_users(sess, connector, access_token)
+            user_map = _pull_users(sess, connector, access_token, schema=schema)
             counts["users"] = len(user_map)
 
             contact_map = _pull_contacts(
-                sess, connector, access_token, user_map, contacts_limit
+                sess, connector, access_token, user_map, contacts_limit, schema=schema
             )
             counts["contacts"] = len(contact_map)
 
@@ -630,6 +663,7 @@ def pull_amocrm_core(
                 contact_map=contact_map,
                 since=since,
                 limit=deals_limit,
+                schema=schema,
             )
             counts["deals"] = deals_count
 
