@@ -142,6 +142,25 @@ def _sync_summary(c: CrmConnection, plan_key: str | None = None) -> dict[str, An
     }
 
 
+async def _active_pull_job_count(
+    session: AsyncSession,
+    *,
+    connection_id: uuid.UUID,
+) -> int:
+    value = (
+        await session.execute(
+            text(
+                "SELECT COUNT(*) FROM jobs "
+                "WHERE crm_connection_id = CAST(:connection_id AS UUID) "
+                "  AND kind = 'pull_amocrm_core' "
+                "  AND status IN ('queued', 'running')"
+            ),
+            {"connection_id": str(connection_id)},
+        )
+    ).scalar_one()
+    return int(value or 0)
+
+
 def _serialize_conn(c: CrmConnection, *, plan_key: str | None = None) -> dict[str, Any]:
     """Возвращаем безопасную выборку полей. НЕ включаем токены."""
     return {
@@ -968,6 +987,16 @@ async def full_export(
     session: AsyncSession = Depends(get_session),
 ) -> JobCreatedResponse:
     conn, ws = await _get_conn_for_user(session, user, connection_id)
+    if await _active_pull_job_count(session, connection_id=conn.id):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "error": {
+                    "code": "sync_already_running",
+                    "message": "amoCRM sync is already queued or running",
+                }
+            },
+        )
     if body.date_from > body.date_to:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -1040,6 +1069,16 @@ async def sync_connection(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={"error": {"code": "conflict", "message": "Cannot sync in current state"}},
+        )
+    if await _active_pull_job_count(session, connection_id=conn.id):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "error": {
+                    "code": "sync_already_running",
+                    "message": "amoCRM sync is already queued or running",
+                }
+            },
         )
     payload = {
         "connection_id": str(conn.id),

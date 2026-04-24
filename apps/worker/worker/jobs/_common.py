@@ -40,7 +40,8 @@ def mark_job_succeeded(job_row_id: str | None, result: dict[str, Any] | None = N
     with sync_session() as sess:
         sess.execute(
             text(
-                "UPDATE jobs SET status='succeeded', finished_at=NOW(), result = CAST(:res AS JSONB) "
+                "UPDATE jobs SET status='succeeded', finished_at=NOW(), "
+                "  result = COALESCE(result, '{}'::jsonb) || CAST(:res AS JSONB) "
                 "WHERE id = CAST(:rid AS UUID)"
             ),
             {"rid": job_row_id, "res": _json(result or {})},

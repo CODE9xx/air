@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { useLocale, useTranslations } from 'next-intl';
 import { api } from '@/lib/api';
+import { ApiError } from '@/lib/apiError';
 import type { CrmConnection, FullExportTokenQuote, TokenEstimateResponse } from '@/lib/types';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -100,7 +101,9 @@ export default function ConnectionDetailPage() {
   const [exportJobId, setExportJobId] = useState<string | null>(null);
   const [exportJobStatus, setExportJobStatus] = useState<string | null>(null);
   const [exportJobProgress, setExportJobProgress] = useState<JobProgress | null>(null);
+  const [activeJobKind, setActiveJobKind] = useState<'export' | 'sync' | null>(null);
   const [exportRunning, setExportRunning] = useState(false);
+  const [syncRunning, setSyncRunning] = useState(false);
   const [exportQuote, setExportQuote] = useState<FullExportTokenQuote | null>(null);
   const [exportQuoteLoading, setExportQuoteLoading] = useState(false);
   const [tokenEstimate, setTokenEstimate] = useState<TokenEstimateResponse | null>(null);
@@ -278,10 +281,31 @@ export default function ConnectionDetailPage() {
       setExportJobId(res.job_id);
       setExportJobStatus('queued');
       setExportJobProgress(null);
+      setActiveJobKind('export');
       toast({ kind: 'success', title: tActions('realExportStarted') });
     } catch {
       toast({ kind: 'error', title: tCommon('error') });
       setExportRunning(false);
+    }
+  };
+
+  const startIncrementalSync = async () => {
+    if (!conn) return;
+    setSyncRunning(true);
+    try {
+      const res = await api.post<{ job_id: string }>(`/crm/connections/${conn.id}/sync`);
+      setExportJobId(res.job_id);
+      setExportJobStatus('queued');
+      setExportJobProgress(null);
+      setActiveJobKind('sync');
+      toast({ kind: 'success', title: tActions('syncStarted') });
+    } catch (error) {
+      if (error instanceof ApiError && error.code === 'sync_already_running') {
+        toast({ kind: 'info', title: tActions('syncAlreadyRunning') });
+      } else {
+        toast({ kind: 'error', title: tCommon('error') });
+      }
+      setSyncRunning(false);
     }
   };
 
@@ -295,21 +319,27 @@ export default function ConnectionDetailPage() {
         if (job.status === 'succeeded') {
           window.clearInterval(timer);
           setExportRunning(false);
+          setSyncRunning(false);
           await reloadConnection();
-          toast({ kind: 'success', title: tActions('realExportDone') });
+          toast({
+            kind: 'success',
+            title: activeJobKind === 'sync' ? tActions('syncDone') : tActions('realExportDone'),
+          });
         }
         if (job.status === 'failed') {
           window.clearInterval(timer);
           setExportRunning(false);
+          setSyncRunning(false);
           toast({ kind: 'error', title: job.error ?? tCommon('error') });
         }
       } catch {
         window.clearInterval(timer);
         setExportRunning(false);
+        setSyncRunning(false);
       }
     }, 2500);
     return () => window.clearInterval(timer);
-  }, [exportJobId, tActions, tCommon, toast]);
+  }, [exportJobId, activeJobKind, tActions, tCommon, toast]);
 
   if (loading) return <Skeleton className="h-40" />;
   if (!conn) return null;
@@ -691,6 +721,14 @@ export default function ConnectionDetailPage() {
           {tActions('runAudit')}
         </Link>
         <Button variant="secondary" onClick={openRealExportSetup}>{tActions('configureRealExport')}</Button>
+        <Button
+          variant="secondary"
+          onClick={startIncrementalSync}
+          loading={syncRunning}
+          disabled={exportRunning || syncRunning}
+        >
+          {tActions('syncNow')}
+        </Button>
         <Button variant="secondary" onClick={startTrialExport}>{tActions('trialExport')}</Button>
         <Button variant="secondary" onClick={doPause}>
           {conn.status === 'paused' ? tActions('resume') : tActions('pause')}
