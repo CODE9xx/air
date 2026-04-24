@@ -25,7 +25,7 @@ type OAuthFlash =
   | 'amocrm_credentials_missing'
   | 'mock_oauth_ok';
 
-type ExportPreset = 'last12Months' | 'currentYear' | 'custom';
+type ExportPreset = 'allTime' | 'last12Months' | 'currentYear' | 'custom';
 type TokenEstimatePeriod = 'all_time' | 'active_export';
 
 type ExportPipeline = {
@@ -53,6 +53,9 @@ function inputDate(value: Date): string {
 
 function defaultDateRange(preset: ExportPreset): { dateFrom: string; dateTo: string } {
   const now = new Date();
+  if (preset === 'allTime') {
+    return { dateFrom: '2000-01-01', dateTo: inputDate(now) };
+  }
   if (preset === 'currentYear') {
     return { dateFrom: `${now.getFullYear()}-01-01`, dateTo: inputDate(now) };
   }
@@ -479,7 +482,7 @@ export default function ConnectionDetailPage() {
             )}
           </div>
           <div className="flex flex-wrap gap-2">
-            {(['last12Months', 'currentYear', 'custom'] as ExportPreset[]).map((preset) => (
+            {(['allTime', 'last12Months', 'currentYear', 'custom'] as ExportPreset[]).map((preset) => (
               <Button
                 key={preset}
                 type="button"

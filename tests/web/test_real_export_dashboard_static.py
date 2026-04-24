@@ -24,4 +24,5 @@ def test_connection_detail_has_real_export_setup_flow():
     assert "/crm/connections/${conn.id}/export/options" in src
     assert "/crm/connections/${conn.id}/full-export" in src
     assert "last12Months" in src
+    assert "allTime" in src
     assert "pipeline_ids" in src
