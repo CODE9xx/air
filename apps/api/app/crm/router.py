@@ -13,7 +13,7 @@ from __future__ import annotations
 import re
 import secrets
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, time, timedelta, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -24,6 +24,12 @@ from app.auth.dependencies import (
     get_current_user,
     get_current_workspace,
     require_workspace_role,
+)
+from app.billing.tokens import (
+    build_full_export_quote,
+    get_or_create_token_account,
+    reserve_tokens_for_export_job,
+    token_account_snapshot,
 )
 from app.core.db import get_session
 from app.core.email import send_verification_code
@@ -793,6 +799,102 @@ async def export_estimate(
     }
 
 
+def _export_date_start(value) -> datetime:
+    return datetime.combine(value, time.min, tzinfo=timezone.utc)
+
+
+def _export_date_end(value) -> datetime:
+    return datetime.combine(value, time.max, tzinfo=timezone.utc)
+
+
+async def _cached_export_deals_count(
+    session: AsyncSession,
+    conn: CrmConnection,
+    body: FullExportRequest,
+) -> int | None:
+    """Best-effort cached deal count from tenant data for quote scaling."""
+    schema = conn.tenant_schema
+    if not schema or not _TENANT_SCHEMA_RE.fullmatch(schema):
+        return None
+    clauses = [
+        "d.created_at_external >= :created_from",
+        "d.created_at_external <= :created_to",
+    ]
+    params: dict[str, Any] = {
+        "created_from": _export_date_start(body.date_from),
+        "created_to": _export_date_end(body.date_to),
+    }
+    selected = [str(pid).strip() for pid in body.pipeline_ids if str(pid).strip()]
+    if selected:
+        placeholders: list[str] = []
+        for idx, pipeline_id in enumerate(selected):
+            key = f"pipeline_{idx}"
+            placeholders.append(f":{key}")
+            params[key] = pipeline_id
+        clauses.append(f"p.external_id IN ({', '.join(placeholders)})")
+
+    q_schema = f'"{schema}"'
+    try:
+        value = (
+            await session.execute(
+                text(
+                    f"SELECT COUNT(*) "
+                    f"FROM {q_schema}.deals d "
+                    f"LEFT JOIN {q_schema}.pipelines p ON p.id = d.pipeline_id "
+                    f"WHERE {' AND '.join(clauses)}"
+                ),
+                params,
+            )
+        ).scalar()
+    except Exception:
+        return None
+    return int(value or 0)
+
+
+async def _build_full_export_quote_response(
+    *,
+    session: AsyncSession,
+    conn: CrmConnection,
+    ws: Workspace,
+    body: FullExportRequest,
+) -> dict[str, Any]:
+    account = await get_or_create_token_account(session, ws)
+    account_state = token_account_snapshot(account)
+    cached_deals_count = await _cached_export_deals_count(session, conn, body)
+    quote = build_full_export_quote(
+        connection_id=str(conn.id),
+        date_from=body.date_from,
+        date_to=body.date_to,
+        pipeline_ids=[str(pid) for pid in body.pipeline_ids],
+        metadata=conn.metadata_json or {},
+        available_mtokens=account_state["available_mtokens"],
+        cached_deals_count=cached_deals_count,
+    )
+    quote["token_account"] = account_state
+    return quote
+
+
+@router.post("/connections/{connection_id}/full-export/quote")
+async def full_export_quote(
+    connection_id: uuid.UUID,
+    body: FullExportRequest,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    conn, ws = await _get_conn_for_user(session, user, connection_id)
+    if body.date_from > body.date_to:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"error": {"code": "validation_error", "message": "date_from must be <= date_to"}},
+        )
+    return await _build_full_export_quote_response(
+        session=session,
+        conn=conn,
+        ws=ws,
+        body=body,
+    )
+
+
 @router.post("/connections/{connection_id}/full-export", status_code=status.HTTP_202_ACCEPTED)
 async def full_export(
     connection_id: uuid.UUID,
@@ -805,6 +907,23 @@ async def full_export(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail={"error": {"code": "validation_error", "message": "date_from must be <= date_to"}},
+        )
+    quote = await _build_full_export_quote_response(
+        session=session,
+        conn=conn,
+        ws=ws,
+        body=body,
+    )
+    if not quote["can_start"]:
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail={
+                "error": {
+                    "code": "insufficient_tokens",
+                    "message": "Недостаточно AIC9-токенов для выгрузки",
+                    "quote": quote,
+                }
+            },
         )
     payload = {
         "connection_id": str(conn.id),
@@ -825,12 +944,23 @@ async def full_export(
     )
     session.add(job)
     await session.flush()  # populates job.id (Task #52.6)
+    reservation = await reserve_tokens_for_export_job(
+        session,
+        workspace=ws,
+        crm_connection_id=conn.id,
+        job=job,
+        quote=quote,
+    )
     rq_id = enqueue(
         "pull_amocrm_core", payload, job_row_id=str(job.id)
     )
     job.rq_job_id = rq_id
     await session.commit()
-    return JobCreatedResponse(job_id=str(job.id))
+    return JobCreatedResponse(
+        job_id=str(job.id),
+        reservation_id=str(reservation.id),
+        reserved_tokens=quote["estimated_tokens"],
+    )
 
 
 # -------------------- Sync (convenience) --------------------

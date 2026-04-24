@@ -53,6 +53,9 @@ from app.db.models.enums import (
     JobStatus,
     Locale,
     NotificationKind,
+    TokenAccountPlan,
+    TokenLedgerKind,
+    TokenReservationStatus,
     UserStatus,
     WorkspaceMemberRole,
     WorkspaceStatus,
@@ -272,6 +275,110 @@ class BillingLedger(MainBase):
         enum_check("kind", BillingLedgerKind, "ck_billledger_kind"),
         Index("ix_billledger_account_created", "billing_account_id", "created_at"),
         Index("ix_billledger_workspace", "workspace_id"),
+    )
+
+
+# ---------- 1.8b token_accounts ----------
+class TokenAccount(MainBase):
+    __tablename__ = "token_accounts"
+
+    id = uuid_pk()
+    workspace_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("workspaces.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+    )
+    plan_key = Column(Text, nullable=False, server_default="free")
+    included_monthly_mtokens = Column(BigInteger, nullable=False, server_default="0")
+    balance_mtokens = Column(BigInteger, nullable=False, server_default="0")
+    reserved_mtokens = Column(BigInteger, nullable=False, server_default="0")
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=now_default())
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=now_default())
+
+    __table_args__ = (
+        enum_check("plan_key", TokenAccountPlan, "ck_tokenacc_plan_key"),
+        CheckConstraint("included_monthly_mtokens >= 0", name="ck_tokenacc_included_nonnegative"),
+        CheckConstraint("balance_mtokens >= 0", name="ck_tokenacc_balance_nonnegative"),
+        CheckConstraint("reserved_mtokens >= 0", name="ck_tokenacc_reserved_nonnegative"),
+        CheckConstraint("reserved_mtokens <= balance_mtokens", name="ck_tokenacc_reserved_lte_balance"),
+        Index("ix_tokenacc_workspace", "workspace_id"),
+    )
+
+
+# ---------- 1.8c token_reservations ----------
+class TokenReservation(MainBase):
+    __tablename__ = "token_reservations"
+
+    id = uuid_pk()
+    token_account_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("token_accounts.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    workspace_id = Column(UUID(as_uuid=True), ForeignKey("workspaces.id"), nullable=False)
+    crm_connection_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("crm_connections.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    job_id = Column(UUID(as_uuid=True), ForeignKey("jobs.id", ondelete="SET NULL"), nullable=True)
+    amount_mtokens = Column(BigInteger, nullable=False)
+    status = Column(Text, nullable=False, server_default="reserved")
+    reason = Column(Text, nullable=False)
+    description = Column(Text, nullable=True)
+    metadata_json = Column("metadata", JSONB, nullable=False, server_default="{}")
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=now_default())
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=now_default())
+    finalized_at = Column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        enum_check("status", TokenReservationStatus, "ck_tokenres_status"),
+        CheckConstraint("amount_mtokens > 0", name="ck_tokenres_amount_positive"),
+        UniqueConstraint("job_id", name="uq_tokenres_job"),
+        Index("ix_tokenres_workspace_created", "workspace_id", "created_at"),
+        Index("ix_tokenres_status_created", "status", "created_at"),
+        Index("ix_tokenres_connection", "crm_connection_id"),
+    )
+
+
+# ---------- 1.8d token_ledger ----------
+class TokenLedger(MainBase):
+    __tablename__ = "token_ledger"
+
+    id = uuid_pk()
+    token_account_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("token_accounts.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    workspace_id = Column(UUID(as_uuid=True), ForeignKey("workspaces.id"), nullable=False)
+    crm_connection_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("crm_connections.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    job_id = Column(UUID(as_uuid=True), ForeignKey("jobs.id", ondelete="SET NULL"), nullable=True)
+    reservation_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("token_reservations.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    amount_mtokens = Column(BigInteger, nullable=False)
+    balance_after_mtokens = Column(BigInteger, nullable=False)
+    reserved_after_mtokens = Column(BigInteger, nullable=False)
+    kind = Column(Text, nullable=False)
+    description = Column(Text, nullable=False)
+    reference = Column(Text, nullable=True)
+    metadata_json = Column("metadata", JSONB, nullable=False, server_default="{}")
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=now_default())
+
+    __table_args__ = (
+        enum_check("kind", TokenLedgerKind, "ck_tokenledger_kind"),
+        Index("ix_tokenledger_account_created", "token_account_id", "created_at"),
+        Index("ix_tokenledger_workspace_created", "workspace_id", "created_at"),
+        Index("ix_tokenledger_connection", "crm_connection_id"),
+        Index("ix_tokenledger_job", "job_id"),
     )
 
 
@@ -716,6 +823,9 @@ __all__ = [
     "CrmConnection",
     "BillingAccount",
     "BillingLedger",
+    "TokenAccount",
+    "TokenLedger",
+    "TokenReservation",
     "Job",
     "Notification",
     "AdminUser",

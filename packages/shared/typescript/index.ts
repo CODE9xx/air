@@ -255,6 +255,62 @@ export interface TokenEstimateResponse {
   notes: string[];
 }
 
+export interface TokenAccount {
+  id: string;
+  workspace_id: string;
+  plan_key: string;
+  included_monthly_tokens: number;
+  balance_tokens: number;
+  reserved_tokens: number;
+  available_tokens: number;
+  balance_mtokens: number;
+  reserved_mtokens: number;
+  available_mtokens: number;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface FullExportTokenQuote {
+  connection_id: string;
+  date_from: string;
+  date_to: string;
+  pipeline_ids: string[];
+  pricing_basis: string;
+  estimated_deals: number;
+  estimated_contacts: number;
+  estimated_tokens: number;
+  estimated_mtokens: number;
+  available_tokens: number;
+  available_mtokens: number;
+  missing_tokens: number;
+  missing_mtokens: number;
+  can_start: boolean;
+  line_items: Array<{
+    key: string;
+    label: string;
+    quantity: number;
+    unit_tokens: number;
+    tokens: number;
+  }>;
+  token_account?: TokenAccount;
+}
+
+export interface TokenLedgerEntry {
+  id: string;
+  kind: string;
+  amount_tokens: number;
+  amount_mtokens: number;
+  balance_after_tokens: number;
+  reserved_after_tokens: number;
+  description: string;
+  reference?: string | null;
+  crm_connection_id?: string | null;
+  job_id?: string | null;
+  reservation_id?: string | null;
+  metadata?: Record<string, unknown>;
+  created_at?: string | null;
+}
+
 export interface DashboardOverview {
   funnel: Array<{ stage: string; count: number; conversion_from_previous: number | null }>;
   conversions: { lead_to_deal: number; deal_to_won: number };

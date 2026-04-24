@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { useLocale, useTranslations } from 'next-intl';
 import { api } from '@/lib/api';
-import type { CrmConnection, TokenEstimateResponse } from '@/lib/types';
+import type { CrmConnection, FullExportTokenQuote, TokenEstimateResponse } from '@/lib/types';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Skeleton } from '@/components/ui/Skeleton';
@@ -88,6 +88,8 @@ export default function ConnectionDetailPage() {
   const [exportJobId, setExportJobId] = useState<string | null>(null);
   const [exportJobStatus, setExportJobStatus] = useState<string | null>(null);
   const [exportRunning, setExportRunning] = useState(false);
+  const [exportQuote, setExportQuote] = useState<FullExportTokenQuote | null>(null);
+  const [exportQuoteLoading, setExportQuoteLoading] = useState(false);
   const [tokenEstimate, setTokenEstimate] = useState<TokenEstimateResponse | null>(null);
   const [tokenEstimateLoading, setTokenEstimateLoading] = useState(false);
   const [tokenEstimatePeriod, setTokenEstimatePeriod] = useState<TokenEstimatePeriod>('all_time');
@@ -208,10 +210,50 @@ export default function ConnectionDetailPage() {
     );
   };
 
+  useEffect(() => {
+    if (!showExportSetup || !conn || !dateFrom || !dateTo) return;
+    const timer = window.setTimeout(async () => {
+      setExportQuoteLoading(true);
+      try {
+        const quote = await api.post<FullExportTokenQuote>(
+          `/crm/connections/${conn.id}/full-export/quote`,
+          {
+            date_from: dateFrom,
+            date_to: dateTo,
+            pipeline_ids: selectedPipelineIds,
+          },
+        );
+        setExportQuote(quote);
+      } catch {
+        setExportQuote(null);
+      } finally {
+        setExportQuoteLoading(false);
+      }
+    }, 350);
+    return () => window.clearTimeout(timer);
+  }, [showExportSetup, conn?.id, dateFrom, dateTo, selectedPipelineIds.join('|')]);
+
   const startRealExport = async () => {
     if (!conn) return;
     setExportRunning(true);
     try {
+      const quote = await api.post<FullExportTokenQuote>(
+        `/crm/connections/${conn.id}/full-export/quote`,
+        {
+          date_from: dateFrom,
+          date_to: dateTo,
+          pipeline_ids: selectedPipelineIds,
+        },
+      );
+      setExportQuote(quote);
+      if (!quote.can_start) {
+        toast({
+          kind: 'warning',
+          title: `Не хватает ${quote.missing_tokens.toLocaleString()} AIC9-токенов`,
+        });
+        setExportRunning(false);
+        return;
+      }
       const res = await api.post<{ job_id: string }>(
         `/crm/connections/${conn.id}/full-export`,
         {
@@ -558,7 +600,38 @@ export default function ConnectionDetailPage() {
               </div>
             )}
           </div>
-          <Button onClick={startRealExport} loading={exportRunning}>
+          {exportQuoteLoading && <Skeleton className="h-24" />}
+          {exportQuote && (
+            <div className="rounded-md border border-border bg-muted p-3">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+                <CountField label="Клиентов в расчёте" value={exportQuote.estimated_contacts} />
+                <CountField label="Нужно токенов" value={exportQuote.estimated_tokens} />
+                <CountField label="Доступно токенов" value={exportQuote.available_tokens} />
+                <CountField label="Не хватает" value={exportQuote.missing_tokens} />
+              </div>
+              <div className="mt-3 flex items-center justify-between gap-3 flex-wrap text-sm">
+                <div className={exportQuote.can_start ? 'text-success' : 'text-danger'}>
+                  {exportQuote.can_start
+                    ? 'Токенов хватает, можно запускать выгрузку.'
+                    : `Недостаточно токенов для выгрузки за выбранный период.`}
+                </div>
+                {!exportQuote.can_start && (
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={() => router.push(`/${locale}/app/connections/${conn.id}/billing`)}
+                  >
+                    Пополнить баланс
+                  </Button>
+                )}
+              </div>
+            </div>
+          )}
+          <Button
+            onClick={startRealExport}
+            loading={exportRunning}
+            disabled={exportQuoteLoading || (exportQuote ? !exportQuote.can_start : false)}
+          >
             {tActions('startRealExport')}
           </Button>
         </section>

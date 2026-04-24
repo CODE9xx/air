@@ -84,6 +84,30 @@ class BillingLedgerKind(StrEnum):
     ADJUSTMENT = "adjustment"
 
 
+class TokenAccountPlan(StrEnum):
+    FREE = "free"
+    PAYGO = "paygo"
+    START = "start"
+    TEAM = "team"
+    PRO = "pro"
+
+
+class TokenLedgerKind(StrEnum):
+    GRANT = "grant"
+    PURCHASE = "purchase"
+    RESERVE = "reserve"
+    CHARGE = "charge"
+    RELEASE = "release"
+    REFUND = "refund"
+    ADJUSTMENT = "adjustment"
+
+
+class TokenReservationStatus(StrEnum):
+    RESERVED = "reserved"
+    CHARGED = "charged"
+    RELEASED = "released"
+
+
 class JobKind(StrEnum):
     FETCH_CRM_DATA = "fetch_crm_data"
     NORMALIZE_TENANT_DATA = "normalize_tenant_data"

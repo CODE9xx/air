@@ -10,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import get_current_user, require_admin_role
+from app.billing.tokens import get_or_create_token_account, token_account_snapshot, mtokens_to_tokens_ceil
 from app.core.db import get_session
 from app.db.models import (
     AdminAuditLog,
@@ -17,8 +18,10 @@ from app.db.models import (
     BillingAccount,
     BillingLedger,
     CrmConnection,
+    TokenLedger,
     User,
     Workspace,
+    WorkspaceMember,
 )
 
 router = APIRouter(tags=["billing"])
@@ -46,8 +49,6 @@ async def _load_ws_from_connection(
         )
     _, ws = row
     # user access check — через owner_user_id (MVP).
-    from app.db.models import WorkspaceMember
-
     m = (
         await session.execute(
             select(WorkspaceMember)
@@ -61,6 +62,55 @@ async def _load_ws_from_connection(
             detail={"error": {"code": "forbidden", "message": "Not a workspace member"}},
         )
     return ws
+
+
+async def _load_ws(
+    session: AsyncSession,
+    workspace_id: uuid.UUID,
+    user: User,
+) -> Workspace:
+    ws = (
+        await session.execute(select(Workspace).where(Workspace.id == workspace_id))
+    ).scalar_one_or_none()
+    if not ws:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"error": {"code": "not_found", "message": "Workspace not found"}},
+        )
+    member = (
+        await session.execute(
+            select(WorkspaceMember)
+            .where(WorkspaceMember.workspace_id == workspace_id)
+            .where(WorkspaceMember.user_id == user.id)
+        )
+    ).scalar_one_or_none()
+    if not member:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"error": {"code": "forbidden", "message": "Not a workspace member"}},
+        )
+    return ws
+
+
+def _serialize_token_ledger(row: TokenLedger) -> dict[str, Any]:
+    amount = int(row.amount_mtokens or 0)
+    return {
+        "id": str(row.id),
+        "kind": row.kind,
+        "amount_tokens": (
+            -mtokens_to_tokens_ceil(abs(amount)) if amount < 0 else mtokens_to_tokens_ceil(amount)
+        ),
+        "amount_mtokens": amount,
+        "balance_after_tokens": mtokens_to_tokens_ceil(row.balance_after_mtokens or 0),
+        "reserved_after_tokens": mtokens_to_tokens_ceil(row.reserved_after_mtokens or 0),
+        "description": row.description,
+        "reference": row.reference,
+        "crm_connection_id": str(row.crm_connection_id) if row.crm_connection_id else None,
+        "job_id": str(row.job_id) if row.job_id else None,
+        "reservation_id": str(row.reservation_id) if row.reservation_id else None,
+        "metadata": row.metadata_json or {},
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+    }
 
 
 @router.get("/crm/connections/{connection_id}/billing")
@@ -104,6 +154,41 @@ async def get_connection_billing(
             for r in ledger_rows
         ],
     }
+
+
+@router.get("/workspaces/{workspace_id}/billing/token-account")
+async def get_workspace_token_account(
+    workspace_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    ws = await _load_ws(session, workspace_id, user)
+    account = await get_or_create_token_account(session, ws)
+    await session.commit()
+    return token_account_snapshot(account)
+
+
+@router.get("/workspaces/{workspace_id}/billing/token-ledger")
+async def get_workspace_token_ledger(
+    workspace_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    await _load_ws(session, workspace_id, user)
+    account = await get_or_create_token_account(
+        session,
+        (await session.execute(select(Workspace).where(Workspace.id == workspace_id))).scalar_one(),
+    )
+    rows = (
+        await session.execute(
+            select(TokenLedger)
+            .where(TokenLedger.token_account_id == account.id)
+            .order_by(TokenLedger.created_at.desc())
+            .limit(100)
+        )
+    ).scalars().all()
+    await session.commit()
+    return {"items": [_serialize_token_ledger(row) for row in rows]}
 
 
 @router.post("/crm/connections/{connection_id}/billing/manual-topup")

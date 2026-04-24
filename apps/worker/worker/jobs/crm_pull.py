@@ -50,9 +50,11 @@ from ..lib.amocrm_creds import load_amocrm_oauth_credentials
 from ..lib.crypto import decrypt_token
 from ..lib.db import sync_session
 from ._common import (
+    charge_token_reservation_for_job,
     mark_job_failed,
     mark_job_running,
     mark_job_succeeded,
+    release_token_reservation_for_job,
 )
 
 logger = logging.getLogger("code9.worker.crm_pull")
@@ -769,6 +771,7 @@ def pull_amocrm_core(
                 },
                 "audit_job_enqueued": audit_enqueued,
             }
+            charge_token_reservation_for_job(job_row_id, result)
             mark_job_succeeded(job_row_id, result)
             return result
 
@@ -968,9 +971,11 @@ def pull_amocrm_core(
             "counts": counts,
             "audit_job_enqueued": audit_enqueued,
         }
+        charge_token_reservation_for_job(job_row_id, result)
         mark_job_succeeded(job_row_id, result)
         return result
     except Exception as exc:
+        release_token_reservation_for_job(job_row_id, f"pull_amocrm_core: {exc}")
         mark_job_failed(job_row_id, f"pull_amocrm_core: {exc}")
         raise
 

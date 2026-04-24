@@ -3,7 +3,12 @@
 import { useTranslations, useLocale } from 'next-intl';
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
-import type { BillingAccount, BillingLedgerEntry } from '@/lib/types';
+import type {
+  BillingAccount,
+  BillingLedgerEntry,
+  TokenAccount,
+  TokenLedgerEntry,
+} from '@/lib/types';
 import {
   aiTokenRates,
   billingPeriods,
@@ -24,18 +29,24 @@ export function BillingPanel({ workspaceId }: { workspaceId: string }) {
   const { toast } = useToast();
   const [account, setAccount] = useState<BillingAccount | null>(null);
   const [ledger, setLedger] = useState<BillingLedgerEntry[]>([]);
+  const [tokenAccount, setTokenAccount] = useState<TokenAccount | null>(null);
+  const [tokenLedger, setTokenLedger] = useState<TokenLedgerEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [period, setPeriod] = useState<PricingPeriodKey>('monthly');
 
   useEffect(() => {
     (async () => {
       try {
-        const [a, l] = await Promise.all([
+        const [a, l, tokenAccountResponse, tokenLedgerResponse] = await Promise.all([
           api.get<BillingAccount>(`/workspaces/${workspaceId}/billing/account`),
           api.get<{ items: BillingLedgerEntry[] }>(`/workspaces/${workspaceId}/billing/ledger`),
+          api.get<TokenAccount>(`/workspaces/${workspaceId}/billing/token-account`),
+          api.get<{ items: TokenLedgerEntry[] }>(`/workspaces/${workspaceId}/billing/token-ledger`),
         ]);
         setAccount(a);
         setLedger(l.items ?? []);
+        setTokenAccount(tokenAccountResponse);
+        setTokenLedger(tokenLedgerResponse.items ?? []);
       } finally {
         setLoading(false);
       }
@@ -66,15 +77,59 @@ export function BillingPanel({ workspaceId }: { workspaceId: string }) {
         <div className="grid grid-cols-2 gap-3 text-sm">
           <SummaryPill
             label="AI-токены тарифа"
-            value={currentPlan ? `${formatNumber(currentPlan.tokens, locale)} / мес` : 'тариф не выбран'}
+            value={
+              tokenAccount
+                ? `${formatNumber(tokenAccount.included_monthly_tokens, locale)} / мес`
+                : currentPlan
+                  ? `${formatNumber(currentPlan.tokens, locale)} / мес`
+                  : 'тариф не выбран'
+            }
           />
           <SummaryPill
-            label="Обновление базы"
-            value={currentPlan?.updateInterval ?? 'зависит от тарифа'}
+            label="Доступно токенов"
+            value={tokenAccount ? formatNumber(tokenAccount.available_tokens, locale) : '—'}
           />
+          <SummaryPill
+            label="Зарезервировано"
+            value={tokenAccount ? formatNumber(tokenAccount.reserved_tokens, locale) : '—'}
+          />
+          <SummaryPill label="Обновление базы" value={currentPlan?.updateInterval ?? 'зависит от тарифа'} />
         </div>
         <Button onClick={() => toast({ kind: 'info', title: t('topUp') })}>{t('topUp')}</Button>
       </div>
+
+      <section className="card p-5 space-y-4">
+        <div className="flex items-start justify-between gap-3 flex-wrap">
+          <div>
+            <h2 className="text-lg font-semibold">Баланс AIC9-токенов</h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Перед реальной выгрузкой токены резервируются. После успешной выгрузки резерв списывается,
+              при ошибке возвращается.
+            </p>
+          </div>
+          <Badge tone={tokenAccount && tokenAccount.available_tokens > 0 ? 'success' : 'warning'}>
+            {tokenAccount ? `${formatNumber(tokenAccount.available_tokens, locale)} доступно` : 'нет баланса'}
+          </Badge>
+        </div>
+        <div className="grid gap-3 md:grid-cols-4 text-sm">
+          <SummaryPill
+            label="Всего на балансе"
+            value={tokenAccount ? formatNumber(tokenAccount.balance_tokens, locale) : '0'}
+          />
+          <SummaryPill
+            label="Доступно"
+            value={tokenAccount ? formatNumber(tokenAccount.available_tokens, locale) : '0'}
+          />
+          <SummaryPill
+            label="В резерве"
+            value={tokenAccount ? formatNumber(tokenAccount.reserved_tokens, locale) : '0'}
+          />
+          <SummaryPill
+            label="План"
+            value={tokenAccount?.plan_key ?? account.plan}
+          />
+        </div>
+      </section>
 
       <section className="card p-5 space-y-4">
         <div className="flex items-start justify-between gap-3 flex-wrap">
@@ -193,6 +248,47 @@ export function BillingPanel({ workspaceId }: { workspaceId: string }) {
                 <td className="px-5 py-2">{e.description}</td>
                 <td className={`px-5 py-2 text-right font-medium ${e.amount_cents < 0 ? 'text-danger' : 'text-success'}`}>
                   {formatMoney(e.amount_cents, e.currency, locale)}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="card">
+        <div className="p-5 border-b border-border font-semibold">История токенов</div>
+        <table className="w-full text-sm">
+          <thead className="text-left text-xs text-muted-foreground bg-muted">
+            <tr>
+              <th className="px-5 py-2">{t('date')}</th>
+              <th className="px-5 py-2">{t('description')}</th>
+              <th className="px-5 py-2 text-right">Токены</th>
+              <th className="px-5 py-2 text-right">Баланс после</th>
+            </tr>
+          </thead>
+          <tbody>
+            {tokenLedger.length === 0 && (
+              <tr>
+                <td className="px-5 py-4 text-muted-foreground" colSpan={4}>
+                  Списаний токенов пока нет.
+                </td>
+              </tr>
+            )}
+            {tokenLedger.map((entry) => (
+              <tr key={entry.id} className="border-t border-border">
+                <td className="px-5 py-2">{formatDate(entry.created_at, locale)}</td>
+                <td className="px-5 py-2">
+                  <div>{entry.description}</div>
+                  {entry.reference && (
+                    <div className="mt-1 text-xs text-muted-foreground">{entry.reference}</div>
+                  )}
+                </td>
+                <td className={`px-5 py-2 text-right font-medium ${entry.amount_tokens < 0 ? 'text-danger' : 'text-success'}`}>
+                  {entry.amount_tokens > 0 ? '+' : ''}
+                  {formatNumber(entry.amount_tokens, locale)}
+                </td>
+                <td className="px-5 py-2 text-right font-medium">
+                  {formatNumber(entry.balance_after_tokens, locale)}
                 </td>
               </tr>
             ))}

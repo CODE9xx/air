@@ -45,6 +45,12 @@ JOB_KIND_TO_MODULE: dict[str, str] = {
     "pull_amocrm_core": "crm_pull",
 }
 
+JOB_KIND_TIMEOUT_SECONDS: dict[str, int] = {
+    # Full-period amoCRM pulls can process tens of thousands of deals.
+    # RQ default is 180s, which is too small for the real export flow.
+    "pull_amocrm_core": 3600,
+}
+
 
 _queues: dict[str, Queue] = {}
 
@@ -118,6 +124,8 @@ def enqueue(
         if job_row_id is not None:
             worker_kwargs["job_row_id"] = job_row_id
         enqueue_kwargs: dict[str, Any] = {"job_id": str(uuid.uuid4())}
+        if kind in JOB_KIND_TIMEOUT_SECONDS:
+            enqueue_kwargs["job_timeout"] = JOB_KIND_TIMEOUT_SECONDS[kind]
         if depends_on:
             enqueue_kwargs["depends_on"] = depends_on
         job = queue.enqueue_call(

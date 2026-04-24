@@ -31,3 +31,5 @@ class FullExportRequest(BaseModel):
 
 class JobCreatedResponse(BaseModel):
     job_id: str
+    reservation_id: str | None = None
+    reserved_tokens: int | None = None
