@@ -11,12 +11,17 @@ import { useUserAuth } from '@/components/providers/AuthProvider';
 
 export default function ConnectionDashboardPage() {
   const t = useTranslations('cabinet.dashboard_page');
-  const { user } = useUserAuth();
-  const wsId = user?.workspaces?.[0]?.id ?? 'ws-demo-1';
+  const { user, ready } = useUserAuth();
+  const wsId = user?.workspaces?.[0]?.id ?? null;
   const [data, setData] = useState<DashboardOverview | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    if (!ready) return;
+    if (!wsId) {
+      setLoading(false);
+      return;
+    }
     (async () => {
       try {
         const res = await api.get<DashboardOverview>(`/workspaces/${wsId}/dashboards/overview`);
@@ -25,7 +30,7 @@ export default function ConnectionDashboardPage() {
         setLoading(false);
       }
     })();
-  }, [wsId]);
+  }, [ready, wsId]);
 
   return (
     <div className="space-y-6">

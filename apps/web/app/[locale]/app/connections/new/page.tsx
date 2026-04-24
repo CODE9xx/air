@@ -53,8 +53,8 @@ export default function NewConnectionPage() {
   const locale = useLocale();
   const router = useRouter();
   const { toast } = useToast();
-  const { user } = useUserAuth();
-  const wsId = user?.workspaces?.[0]?.id ?? 'ws-demo-1';
+  const { user, ready } = useUserAuth();
+  const wsId = user?.workspaces?.[0]?.id ?? null;
 
   const [loadingOAuth, setLoadingOAuth] = useState(false);
   const [loadingMock, setLoadingMock] = useState(false);
@@ -81,6 +81,10 @@ export default function NewConnectionPage() {
   }, []);
 
   const connectOAuth = async () => {
+    if (!wsId) {
+      toast({ kind: 'error', title: tCommon('error') });
+      return;
+    }
     setLoadingOAuth(true);
     try {
       const res = await api.get<AmoOAuthStartResponse>(
@@ -128,6 +132,10 @@ export default function NewConnectionPage() {
   };
 
   const connectMock = async () => {
+    if (!wsId) {
+      toast({ kind: 'error', title: tCommon('error') });
+      return;
+    }
     setLoadingMock(true);
     try {
       const res = await api.post<CrmConnection>(
@@ -209,13 +217,14 @@ export default function NewConnectionPage() {
               {t('amocrmDesc')}
             </p>
             <div className="mt-4 flex flex-col gap-2">
-              <Button onClick={connectOAuth} loading={loadingOAuth}>
+              <Button onClick={connectOAuth} loading={loadingOAuth} disabled={!ready || !wsId}>
                 {t('connectOAuth')}
               </Button>
               <Button
                 variant="secondary"
                 onClick={connectMock}
                 loading={loadingMock}
+                disabled={!ready || !wsId}
               >
                 {t('connectMock')}
               </Button>

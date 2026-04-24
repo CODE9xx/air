@@ -11,12 +11,17 @@ import { Skeleton } from '@/components/ui/Skeleton';
 export default function CabinetHomePage() {
   const t = useTranslations('cabinet.dashboard');
   const locale = useLocale();
-  const { user } = useUserAuth();
-  const wsId = user?.workspaces?.[0]?.id ?? 'ws-demo-1';
+  const { user, ready } = useUserAuth();
+  const wsId = user?.workspaces?.[0]?.id ?? null;
 
   const [connections, setConnections] = useState<CrmConnection[] | null>(null);
 
   useEffect(() => {
+    if (!ready) return;
+    if (!wsId) {
+      setConnections([]);
+      return;
+    }
     (async () => {
       try {
         const res = await api.get<CrmConnection[]>(`/workspaces/${wsId}/crm/connections`);
@@ -25,7 +30,7 @@ export default function CabinetHomePage() {
         setConnections([]);
       }
     })();
-  }, [wsId]);
+  }, [ready, wsId]);
 
   const active = (connections ?? []).filter((c) => c.status === 'active').length;
 

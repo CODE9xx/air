@@ -26,7 +26,11 @@ interface LoginResponse {
   user: User;
 }
 
-export function LoginForm() {
+interface LoginFormProps {
+  redirectTo?: string;
+}
+
+export function LoginForm({ redirectTo }: LoginFormProps = {}) {
   const t = useTranslations('auth.login');
   const tErr = useTranslations('auth.errors');
   const rootT = useTranslations();
@@ -46,7 +50,7 @@ export function LoginForm() {
       const res = await api.post<LoginResponse>('/auth/login', values, { scope: 'public' });
       userTokenStore.set(res.access_token);
       setUser(res.user);
-      router.push(`/${locale}/app`);
+      router.push(redirectTo ?? `/${locale}/app`);
     } catch (err) {
       const key = mapAuthErrorKey(err);
       toast({ kind: 'error', title: rootT('common.error'), description: rootT(key) });

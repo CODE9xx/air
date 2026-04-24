@@ -18,28 +18,29 @@ export default function AuditPage() {
   const tCommon = useTranslations('common');
   const params = useParams<{ id: string }>();
   const locale = useLocale();
-  const { user } = useUserAuth();
-  const wsId = user?.workspaces?.[0]?.id ?? 'ws-demo-1';
+  const { user, ready } = useUserAuth();
+  const wsId = user?.workspaces?.[0]?.id ?? null;
   const { toast } = useToast();
 
   const [summary, setSummary] = useState<AuditResultSummary | null>(null);
   const [loading, setLoading] = useState(false);
 
   const run = async () => {
+    if (!wsId) {
+      toast({ kind: 'error', title: tCommon('error') });
+      return;
+    }
     setLoading(true);
     try {
       const res = await api.post<{ job_id: string }>(`/workspaces/${wsId}/audit/reports`, {
         crm_connection_id: params?.id,
         period: 'last_90_days',
       });
-      // Имитация прогресса — в mock job сразу succeeded.
       await new Promise((r) => setTimeout(r, 900));
-      // Попробуем получить последний отчёт.
       const list = await api.get<AuditReport[]>(`/workspaces/${wsId}/audit/reports`);
       const latest = list[list.length - 1];
       if (latest) setSummary(latest.summary);
       else {
-        // fallback
         const r = await api.get<AuditReport>(`/workspaces/${wsId}/audit/reports/${res.job_id}`);
         setSummary(r.summary);
       }
@@ -57,7 +58,7 @@ export default function AuditPage() {
           <h1 className="text-2xl font-semibold">{t('title')}</h1>
           <p className="text-sm text-muted-foreground mt-1">{t('subtitle')}</p>
         </div>
-        <Button onClick={run} loading={loading}>{t('run')}</Button>
+        <Button onClick={run} loading={loading} disabled={!ready || !wsId}>{t('run')}</Button>
       </header>
 
       {loading && (
