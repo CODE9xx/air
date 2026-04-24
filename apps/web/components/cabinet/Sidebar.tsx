@@ -1,11 +1,14 @@
 'use client';
 
+import { useEffect, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useLocale, useTranslations } from 'next-intl';
-import { LayoutDashboard, Plug, Bell, Sparkles, BookOpen, Settings } from 'lucide-react';
+import { BarChart3, LayoutDashboard, Plug, Bell, Sparkles, BookOpen, Settings } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { type ReactNode } from 'react';
+import { api } from '@/lib/api';
+import { useUserAuth } from '@/components/providers/AuthProvider';
+import type { CrmConnection } from '@/lib/types';
 
 interface Item {
   href: string;
@@ -18,9 +21,39 @@ export function Sidebar() {
   const tCommon = useTranslations('common');
   const locale = useLocale();
   const pathname = usePathname() ?? '';
+  const { user } = useUserAuth();
+  const workspaceId = user?.workspaces?.[0]?.id ?? null;
+  const [dashboardHref, setDashboardHref] = useState(`/${locale}/app/connections`);
+
+  useEffect(() => {
+    let cancelled = false;
+    setDashboardHref(`/${locale}/app/connections`);
+    if (!workspaceId) return;
+
+    api
+      .get<CrmConnection[]>(`/workspaces/${workspaceId}/crm/connections`)
+      .then((connections) => {
+        if (cancelled) return;
+        const activeConnection =
+          connections.find((connection) => connection.status === 'active') ?? connections[0] ?? null;
+        setDashboardHref(
+          activeConnection
+            ? `/${locale}/app/connections/${activeConnection.id}/dashboard`
+            : `/${locale}/app/connections`,
+        );
+      })
+      .catch(() => {
+        if (!cancelled) setDashboardHref(`/${locale}/app/connections`);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [locale, workspaceId]);
 
   const items: Item[] = [
     { href: `/${locale}/app`, labelKey: 'dashboard', icon: <LayoutDashboard className="h-4 w-4" /> },
+    { href: dashboardHref, labelKey: 'analyticsDashboard', icon: <BarChart3 className="h-4 w-4" /> },
     { href: `/${locale}/app/connections`, labelKey: 'connections', icon: <Plug className="h-4 w-4" /> },
     { href: `/${locale}/app/notifications`, labelKey: 'notifications', icon: <Bell className="h-4 w-4" /> },
     { href: `/${locale}/app/ai`, labelKey: 'ai', icon: <Sparkles className="h-4 w-4" /> },

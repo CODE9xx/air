@@ -163,6 +163,7 @@
   "cabinet": {
     "sidebar": {
       "dashboard": "Обзор",
+      "analyticsDashboard": "Дашборд",
       "connections": "Подключения",
       "notifications": "Уведомления",
       "ai": "AI-аналитика",

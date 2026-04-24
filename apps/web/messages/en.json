@@ -163,6 +163,7 @@
   "cabinet": {
     "sidebar": {
       "dashboard": "Overview",
+      "analyticsDashboard": "Dashboard",
       "connections": "Connections",
       "notifications": "Notifications",
       "ai": "AI analytics",
