@@ -41,6 +41,7 @@ Security:
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import time
 from typing import Any, Iterable, Optional
 from urllib.parse import urlencode
 
@@ -73,6 +74,8 @@ _V1_NOT_IMPLEMENTED_MSG = (
 # если до expires_at осталось меньше чем _EXPIRY_SAFETY_SECONDS,
 # worker запустит refresh сразу, не дожидаясь фактической экспирации.
 _EXPIRY_SAFETY_SECONDS = 60
+_PAGINATED_GET_MAX_ATTEMPTS = 4
+_PAGINATED_GET_RETRY_BASE_SECONDS = 1.0
 
 
 class AmoCrmConnector(CRMConnector):
@@ -309,21 +312,37 @@ class AmoCrmConnector(CRMConnector):
 
         with httpx.Client(timeout=self._http_timeout) as client:
             while url:
-                try:
-                    response = client.get(
-                        url,
-                        params=current_params,
-                        headers={
-                            "Authorization": f"Bearer {access_token}",
-                            "Accept": "application/json",
-                            "User-Agent": "code9-analytics/1.0",
-                        },
-                    )
-                except httpx.RequestError as exc:
+                response = None
+                last_request_error: httpx.RequestError | None = None
+                for attempt in range(1, _PAGINATED_GET_MAX_ATTEMPTS + 1):
+                    try:
+                        response = client.get(
+                            url,
+                            params=current_params,
+                            headers={
+                                "Authorization": f"Bearer {access_token}",
+                                "Accept": "application/json",
+                                "User-Agent": "code9-analytics/1.0",
+                            },
+                        )
+                        break
+                    except httpx.RequestError as exc:
+                        last_request_error = exc
+                        if attempt >= _PAGINATED_GET_MAX_ATTEMPTS:
+                            raise ProviderError(
+                                f"amoCRM {path} unreachable after "
+                                f"{_PAGINATED_GET_MAX_ATTEMPTS} attempts: "
+                                f"{type(exc).__name__}",
+                                provider=self.provider.value,
+                            ) from None
+                        time.sleep(_PAGINATED_GET_RETRY_BASE_SECONDS * (2 ** (attempt - 1)))
+
+                if response is None:
+                    exc_name = type(last_request_error).__name__ if last_request_error else "unknown"
                     raise ProviderError(
-                        f"amoCRM {path} unreachable: {type(exc).__name__}",
+                        f"amoCRM {path} unreachable: {exc_name}",
                         provider=self.provider.value,
-                    ) from None
+                    )
 
                 if response.status_code == 204:
                     return

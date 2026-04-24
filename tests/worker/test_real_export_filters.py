@@ -39,6 +39,47 @@ def test_amocrm_fetch_deals_sends_created_at_and_pipeline_filters():
     }
 
 
+def test_amocrm_paginated_get_retries_transient_request_errors(monkeypatch):
+    import httpx
+
+    from crm_connectors.amocrm import AmoCrmConnector
+
+    class FakeResponse:
+        status_code = 200
+        text = ""
+
+        def json(self):
+            return {"_embedded": {"leads": [{"id": 123}]}, "_links": {}}
+
+    class FakeClient:
+        def __init__(self, timeout):
+            self.timeout = timeout
+            self.calls = 0
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def get(self, *args, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                raise httpx.RemoteProtocolError("server disconnected")
+            return FakeResponse()
+
+    fake_client = FakeClient(timeout=30)
+    monkeypatch.setattr("crm_connectors.amocrm.httpx.Client", lambda timeout: fake_client)
+    monkeypatch.setattr("crm_connectors.amocrm.time.sleep", lambda delay: None)
+
+    connector = AmoCrmConnector(client_id="cid", client_secret="secret", subdomain="demo")
+
+    rows = list(connector._paginated_get("leads", "token", items_key="leads"))
+
+    assert rows == [{"id": 123}]
+    assert fake_client.calls == 2
+
+
 def test_pull_amocrm_core_signature_accepts_real_export_filters():
     import inspect
 
