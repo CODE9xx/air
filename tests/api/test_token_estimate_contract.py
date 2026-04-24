@@ -19,6 +19,7 @@ def test_build_token_estimate_uses_full_snapshot_and_call_minutes():
 
     result = _build_token_estimate(
         connection_id="conn-1",
+        period="all_time",
         metadata={
             "token_estimate_snapshot": {
                 "source": "manual_probe",
@@ -48,6 +49,7 @@ def test_build_token_estimate_uses_full_snapshot_and_call_minutes():
 
     assert result["source"] == "manual_probe"
     assert result["basis"] == "full_database_snapshot"
+    assert result["period"] == "all_time"
     assert result["total_tokens_without_calls"] == 1_422_879_569
     assert result["calls"]["estimated_tokens_low"] == 21_000
     assert result["calls"]["estimated_tokens_high"] == 34_200
@@ -67,6 +69,7 @@ def test_build_token_estimate_falls_back_to_active_export_counts():
 
     result = _build_token_estimate(
         connection_id="conn-1",
+        period="all_time",
         metadata={
             "last_pull_counts": {
                 "deals": 100,
@@ -79,3 +82,42 @@ def test_build_token_estimate_falls_back_to_active_export_counts():
     assert result["source"] == "active_export_counts"
     assert result["basis"] == "active_export_lower_bound"
     assert result["total_tokens_without_calls"] == 195_154
+
+
+def test_build_token_estimate_scales_full_snapshot_for_active_export_period():
+    from app.crm.router import _build_token_estimate
+
+    result = _build_token_estimate(
+        connection_id="conn-1",
+        period="active_export",
+        metadata={
+            "active_export": {
+                "date_from": "2025-04-24",
+                "date_to": "2026-04-24",
+                "counts": {"deals": 50},
+            },
+            "token_estimate_snapshot": {
+                "counts": {
+                    "deals": 100,
+                    "contacts": 40,
+                    "companies": 10,
+                    "lead_notes": 1000,
+                    "events": 2000,
+                },
+                "avg_tokens": {
+                    "deals": 10,
+                    "contacts": 20,
+                    "companies": 30,
+                    "lead_notes": 40,
+                    "events": 50,
+                },
+            },
+        },
+    )
+
+    assert result["period"] == "active_export"
+    assert result["basis"] == "active_export_scaled"
+    assert result["date_from"] == "2025-04-24"
+    assert result["date_to"] == "2026-04-24"
+    assert [item["count"] for item in result["items"]] == [50, 20, 5, 500, 1000]
+    assert result["total_tokens_without_calls"] == 71_050

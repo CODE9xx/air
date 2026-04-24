@@ -233,8 +233,11 @@ export interface TokenEstimateItem {
 
 export interface TokenEstimateResponse {
   connection_id: string;
+  period: 'all_time' | 'active_export' | string;
   source: string;
-  basis: 'full_database_snapshot' | 'active_export_lower_bound' | string;
+  basis: 'full_database_snapshot' | 'active_export_lower_bound' | 'active_export_scaled' | string;
+  date_from?: string | null;
+  date_to?: string | null;
   captured_at?: string | null;
   encoding: string;
   items: TokenEstimateItem[];

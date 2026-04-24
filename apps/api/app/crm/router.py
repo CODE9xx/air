@@ -120,16 +120,20 @@ def _safe_int(value: Any, default: int = 0) -> int:
 def _build_token_estimate(
     *,
     connection_id: str,
+    period: str = "all_time",
     metadata: dict[str, Any],
     call_minutes: int | None = None,
 ) -> dict[str, Any]:
     snapshot = metadata.get("token_estimate_snapshot")
+    normalized_period = period if period in {"all_time", "active_export"} else "all_time"
     counts_source: dict[str, Any] = {}
     avg_source: dict[str, Any] = {}
     confidence: dict[str, str] = {}
     basis = "active_export_lower_bound"
     source = "active_export_counts"
     captured_at = None
+    date_from = None
+    date_to = None
     notes: list[str] = []
 
     if isinstance(snapshot, dict) and isinstance(snapshot.get("counts"), dict):
@@ -141,11 +145,33 @@ def _build_token_estimate(
         captured_at = snapshot.get("captured_at")
         if isinstance(snapshot.get("notes"), list):
             notes = [str(item) for item in snapshot["notes"]]
+        active = metadata.get("active_export")
+        if normalized_period == "active_export" and isinstance(active, dict):
+            active_counts = active.get("counts") if isinstance(active.get("counts"), dict) else {}
+            snapshot_deals = _safe_int(counts_source.get("deals"))
+            active_deals = _safe_int(active_counts.get("deals"))
+            if snapshot_deals > 0 and active_deals > 0:
+                ratio = active_deals / snapshot_deals
+                counts_source = {
+                    key: int(round(_safe_int(counts_source.get(key)) * ratio))
+                    for key in ("deals", "contacts", "companies", "lead_notes", "events")
+                }
+                counts_source["deals"] = active_deals
+                basis = "active_export_scaled"
+                source = "active_export_scaled_from_snapshot"
+                captured_at = active.get("completed_at") or captured_at
+                date_from = active.get("date_from")
+                date_to = active.get("date_to")
+                notes.append(
+                    "Active export period estimate is scaled from full snapshot by deal-count ratio."
+                )
     else:
         active = metadata.get("active_export")
         if isinstance(active, dict) and isinstance(active.get("counts"), dict):
             counts_source = active.get("counts") or {}
             captured_at = active.get("completed_at")
+            date_from = active.get("date_from")
+            date_to = active.get("date_to")
         elif isinstance(metadata.get("last_pull_counts"), dict):
             counts_source = metadata.get("last_pull_counts") or {}
         elif isinstance(metadata.get("last_trial_export_counts"), dict):
@@ -181,8 +207,11 @@ def _build_token_estimate(
     calls_high = normalized_call_minutes * _CALL_TOKENS_PER_MINUTE_HIGH
     return {
         "connection_id": connection_id,
+        "period": normalized_period,
         "source": source,
         "basis": basis,
+        "date_from": date_from,
+        "date_to": date_to,
         "captured_at": captured_at,
         "encoding": "o200k_base",
         "items": items,
@@ -725,6 +754,7 @@ async def export_options(
 @router.get("/connections/{connection_id}/token-estimate")
 async def token_estimate(
     connection_id: uuid.UUID,
+    period: str = "all_time",
     call_minutes: int | None = None,
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
@@ -732,6 +762,7 @@ async def token_estimate(
     conn, _ = await _get_conn_for_user(session, user, connection_id)
     return _build_token_estimate(
         connection_id=str(conn.id),
+        period=period,
         metadata=conn.metadata_json or {},
         call_minutes=call_minutes,
     )

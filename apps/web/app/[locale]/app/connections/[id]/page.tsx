@@ -26,6 +26,7 @@ type OAuthFlash =
   | 'mock_oauth_ok';
 
 type ExportPreset = 'last12Months' | 'currentYear' | 'custom';
+type TokenEstimatePeriod = 'all_time' | 'active_export';
 
 type ExportPipeline = {
   id: string;
@@ -86,6 +87,7 @@ export default function ConnectionDetailPage() {
   const [exportRunning, setExportRunning] = useState(false);
   const [tokenEstimate, setTokenEstimate] = useState<TokenEstimateResponse | null>(null);
   const [tokenEstimateLoading, setTokenEstimateLoading] = useState(false);
+  const [tokenEstimatePeriod, setTokenEstimatePeriod] = useState<TokenEstimatePeriod>('all_time');
   const [callHours, setCallHours] = useState('0');
   const flashShown = useRef(false);
 
@@ -114,7 +116,7 @@ export default function ConnectionDetailPage() {
       setTokenEstimateLoading(true);
       try {
         const estimate = await api.get<TokenEstimateResponse>(
-          `/crm/connections/${conn.id}/token-estimate`,
+          `/crm/connections/${conn.id}/token-estimate?period=${tokenEstimatePeriod}`,
         );
         setTokenEstimate(estimate);
       } catch {
@@ -123,7 +125,7 @@ export default function ConnectionDetailPage() {
         setTokenEstimateLoading(false);
       }
     })();
-  }, [conn?.id]);
+  }, [conn?.id, tokenEstimatePeriod]);
 
   // Показываем toast по OAuth-флагу и чистим query-string.
   useEffect(() => {
@@ -381,7 +383,9 @@ export default function ConnectionDetailPage() {
                 {t('detail.tokenEstimateSource')}:{' '}
                 {tokenEstimate.basis === 'full_database_snapshot'
                   ? t('detail.full_database_snapshot')
-                  : t('detail.active_export_lower_bound')}
+                  : tokenEstimate.basis === 'active_export_scaled'
+                    ? t('detail.active_export_scaled')
+                    : t('detail.active_export_lower_bound')}
               </div>
             )}
           </div>
@@ -394,6 +398,26 @@ export default function ConnectionDetailPage() {
 
         {tokenEstimate && (
           <>
+            <div className="flex flex-wrap gap-2">
+              {(['all_time', 'active_export'] as TokenEstimatePeriod[]).map((period) => (
+                <Button
+                  key={period}
+                  type="button"
+                  size="sm"
+                  variant={tokenEstimatePeriod === period ? 'primary' : 'secondary'}
+                  onClick={() => setTokenEstimatePeriod(period)}
+                >
+                  {period === 'all_time'
+                    ? t('detail.tokenEstimateAllTime')
+                    : t('detail.tokenEstimateActiveExport')}
+                </Button>
+              ))}
+            </div>
+            {(tokenEstimate.date_from || tokenEstimate.date_to) && (
+              <div className="text-xs text-muted-foreground">
+                {tokenEstimate.date_from ?? '—'} – {tokenEstimate.date_to ?? '—'}
+              </div>
+            )}
             <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
               {tokenEstimate.items.map((item) => (
                 <div key={item.key} className="rounded-md border border-border p-3">

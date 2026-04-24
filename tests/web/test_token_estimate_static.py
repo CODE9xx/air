@@ -12,6 +12,10 @@ def test_connection_detail_renders_token_estimate_screen():
     ).read_text(encoding="utf-8")
 
     assert "/crm/connections/${conn.id}/token-estimate" in src
+    assert "tokenEstimatePeriod" in src
+    assert "period=${tokenEstimatePeriod}" in src
+    assert "tokenEstimateAllTime" in src
+    assert "tokenEstimateActiveExport" in src
     assert "TokenEstimateResponse" in src
     assert "callHours" in src
     assert "total_tokens_without_calls" in src
