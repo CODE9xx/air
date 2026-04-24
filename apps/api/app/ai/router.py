@@ -62,17 +62,27 @@ async def ai_analyze(
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     conn = await _resolve_conn(session, user, connection_id)
-    rq_id = enqueue("analyze_conversation", {"connection_id": str(conn.id)})
+    # В stored payload кладём "mock": True как marker. Worker получает kwargs,
+    # совпадающие с worker.jobs.ai.analyze_conversation signature.
+    db_payload = {"connection_id": str(conn.id), "mock": True}
+    worker_payload = {
+        "workspace_id": str(conn.workspace_id),
+        "connection_id": str(conn.id),
+    }
     job = Job(
         workspace_id=conn.workspace_id,
         crm_connection_id=conn.id,
         kind="analyze_conversation",
         queue=queue_for_kind("analyze_conversation"),
         status="queued",
-        payload={"connection_id": str(conn.id), "mock": True},
-        rq_job_id=rq_id,
+        payload=db_payload,
     )
     session.add(job)
+    await session.flush()  # populates job.id (Task #52.6)
+    rq_id = enqueue(
+        "analyze_conversation", worker_payload, job_row_id=str(job.id)
+    )
+    job.rq_job_id = rq_id
     await session.commit()
     return {"job_id": str(job.id)}
 

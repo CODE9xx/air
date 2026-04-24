@@ -97,7 +97,11 @@ def trial_export(
         time.sleep(0.3)
 
         with sync_session() as sess:
-            # Все последующие операторы — в этой схеме.
+            # Task #52.7: все таблицы ссылаем schema-qualified (``"<schema>".<table>``).
+            # Раньше полагались на ``SET LOCAL search_path``, но в проде это падало
+            # с ``UndefinedTable: relation "pipelines" does not exist`` — search_path
+            # терялся между execute'ами (вероятно, pool_pre_ping refresh или
+            # внутренний retry драйвера). SET LOCAL оставлен как belt-and-suspenders.
             sess.execute(text(f'SET LOCAL search_path = {q_schema}, public'))
 
             # ---- Pipelines + stages -----------------------------------
@@ -107,7 +111,7 @@ def trial_export(
                 pipeline_ids.append(pid)
                 sess.execute(
                     text(
-                        "INSERT INTO pipelines(id, external_id, name, is_default) "
+                        f"INSERT INTO {q_schema}.pipelines(id, external_id, name, is_default) "
                         "VALUES (CAST(:id AS UUID), :ext, :name, :def) "
                         "ON CONFLICT (external_id) DO NOTHING"
                     ),
@@ -139,7 +143,7 @@ def trial_export(
                     )
                     sess.execute(
                         text(
-                            "INSERT INTO stages(id, external_id, pipeline_id, name, sort_order, kind) "
+                            f"INSERT INTO {q_schema}.stages(id, external_id, pipeline_id, name, sort_order, kind) "
                             "VALUES (CAST(:id AS UUID), :ext, CAST(:pid AS UUID), :n, :o, :k) "
                             "ON CONFLICT (external_id) DO NOTHING"
                         ),
@@ -164,7 +168,7 @@ def trial_export(
                 user_ids.append(uid)
                 sess.execute(
                     text(
-                        "INSERT INTO crm_users(id, external_id, full_name, role, is_active) "
+                        f"INSERT INTO {q_schema}.crm_users(id, external_id, full_name, role, is_active) "
                         "VALUES (CAST(:id AS UUID), :ext, :name, :role, TRUE) "
                         "ON CONFLICT (external_id) DO NOTHING"
                     ),
@@ -186,7 +190,7 @@ def trial_export(
                 company_ids.append(cid)
                 sess.execute(
                     text(
-                        "INSERT INTO companies(id, external_id, name) "
+                        f"INSERT INTO {q_schema}.companies(id, external_id, name) "
                         "VALUES (CAST(:id AS UUID), :ext, :name) "
                         "ON CONFLICT (external_id) DO NOTHING"
                     ),
@@ -205,7 +209,7 @@ def trial_export(
                 resp = random.choice(user_ids)
                 sess.execute(
                     text(
-                        "INSERT INTO contacts(id, external_id, full_name, responsible_user_id) "
+                        f"INSERT INTO {q_schema}.contacts(id, external_id, full_name, responsible_user_id) "
                         "VALUES (CAST(:id AS UUID), :ext, :name, CAST(:uid AS UUID)) "
                         "ON CONFLICT (external_id) DO NOTHING"
                     ),
@@ -240,7 +244,7 @@ def trial_export(
                 created_at_ext = now - timedelta(days=random.randint(0, 60))
                 sess.execute(
                     text(
-                        "INSERT INTO deals("
+                        f"INSERT INTO {q_schema}.deals("
                         "  id, external_id, name, pipeline_id, stage_id, status, "
                         "  responsible_user_id, contact_id, company_id, price_cents, "
                         "  currency, created_at_external, closed_at_external"
@@ -318,6 +322,26 @@ def build_export_zip(
     connection_id: str,
     *,
     job_row_id: str | None = None,
+    trial: bool = False,
 ) -> dict[str, Any]:
-    """Zip-сборка экспорта (стаб-алиас full_export)."""
+    """
+    Router-dispatcher для export jobs (JobKind.BUILD_EXPORT_ZIP).
+
+    Task #52.5: API-роут ``POST /crm/connections/{id}/trial-export``
+    enqueue'ит этот kind с ``trial=True`` (см. apps/api/app/crm/router.py).
+    Раньше build_export_zip не принимал ``trial`` → при enqueue_call
+    (``kwargs=payload``, Task #52.3D) RQ падал с
+    ``TypeError: build_export_zip() got an unexpected keyword argument 'trial'``.
+
+    Теперь:
+      - ``trial=True``  → ``trial_export`` (создаёт 100 mock deals +
+        pipelines/stages/users/companies/contacts в tenant schema).
+      - ``trial=False`` (default, ``POST .../full-export`` и все legacy-вызовы
+        без kwarg) → ``full_export`` (пока stub; реальная zip-сборка — V1).
+
+    Оба бранча совместимы с существующим ``JobKind.BUILD_EXPORT_ZIP`` —
+    отдельный kind/миграция для trial не нужны.
+    """
+    if trial:
+        return trial_export(connection_id=connection_id, job_row_id=job_row_id)
     return full_export(connection_id=connection_id, job_row_id=job_row_id)

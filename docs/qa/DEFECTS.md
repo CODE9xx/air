@@ -108,8 +108,14 @@
 
 - **Файл:** `apps/worker/worker/jobs/export.py:101`
 - **Описание:** `SET LOCAL search_path = "{schema}", public` — используется `SET LOCAL`, что правильно. Однако в той же функции все INSERT-запросы не квалифицируются явным именем схемы (они опираются на `search_path`). Это корректно в рамках одной транзакции с `SET LOCAL`, но хрупко при рефакторинге.
-- **Статус:** OPEN — minor
-- **Assignee:** DW
+- **Статус:** CLOSED (#52.7, 2026-04-22). В проде всё-таки выстрелило:
+  bootstrap возвращал succeeded, следующий job падал с
+  `UndefinedTable: relation "pipelines"/"raw_pipelines" does not exist`.
+  Фикс:
+  - `apps/api/app/db/migrations/tenant/env.py` — SA-native `execution_options(schema_translate_map={None: schema})` на Connection ДО `context.configure()`. `SET LOCAL` оставлен внутри alembic-транзакции как belt-and-suspenders.
+  - `apps/worker/worker/jobs/export.py` + `apps/worker/worker/jobs/crm_pull.py` — все 12 INSERT'ов теперь schema-qualified (`INSERT INTO "<schema>".<table>`). Schema — строго валидированный идентификатор (`_validate_schema_name` в apply_tenant_template), инъекция исключена.
+  - Регрессия: `tests/worker/test_bootstrap_then_pull_creates_data.py` — 4 integration-теста, гоняют полный пайплайн bootstrap → trial_export / pull_amocrm_core / build_export_zip(trial=True) против реального Postgres, проверяют `public.jobs.status='succeeded'` и физическое размещение таблиц в tenant-схеме.
+- **Assignee:** DW (закрыто)
 
 ---
 

@@ -23,6 +23,7 @@ from app.core.settings import get_settings
 from app.crm.external_router import router as crm_external_router
 from app.crm.oauth_router import router as crm_oauth_router
 from app.crm.router import router as crm_router
+from app.crm.router import ws_crm_router
 from app.dashboards.router import router as dashboards_router
 from app.jobs.router import router as jobs_router
 from app.notifications.router import router as notifications_router
@@ -158,6 +159,7 @@ app.include_router(users_router, prefix=API_PREFIX)
 app.include_router(workspaces_router, prefix=API_PREFIX)
 app.include_router(notifications_router, prefix=API_PREFIX)
 app.include_router(crm_router, prefix=API_PREFIX)
+app.include_router(ws_crm_router, prefix=API_PREFIX)  # /workspaces/{ws}/crm/* (#52.4)
 app.include_router(crm_oauth_router, prefix=API_PREFIX)
 app.include_router(crm_external_router, prefix=API_PREFIX)
 app.include_router(billing_router, prefix=API_PREFIX)

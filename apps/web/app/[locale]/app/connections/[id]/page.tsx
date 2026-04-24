@@ -37,7 +37,11 @@ export default function ConnectionDetailPage() {
   const searchParams = useSearchParams();
   const { toast } = useToast();
   const { user } = useUserAuth();
-  const wsId = user?.workspaces?.[0]?.id ?? 'ws-demo-1';
+  // Task #52.4 follow-up: НЕ подставляем синтетический 'ws-demo-1'.
+  // wsId здесь нужен только для startTrialExport (POST /workspaces/{ws}/export/jobs).
+  // Чтение connection-данных идёт через /crm/connections/{id} и от wsId не зависит,
+  // поэтому страница рендерится корректно даже без workspace.
+  const wsId = user?.workspaces?.[0]?.id ?? null;
   const id = params?.id;
 
   const [conn, setConn] = useState<CrmConnection | null>(null);
@@ -92,11 +96,12 @@ export default function ConnectionDetailPage() {
   const startTrialExport = async () => {
     if (!conn) return;
     try {
-      await api.post(`/workspaces/${wsId}/export/jobs`, {
-        crm_connection_id: conn.id,
-        format: 'zip_csv_json',
-        entities: ['deals'],
-      });
+      // Task #52.5: эндпойнт per-connection, не per-workspace.
+      // Backend сам резолвит ownership через _get_conn_for_user → ставит
+      // RQ job kind=build_export_zip с payload {connection_id, trial: true}.
+      // Старый путь /workspaces/{ws}/export/jobs никогда не существовал
+      // и всегда уходил в 404 → UI показывал toast «Ошибка».
+      await api.post(`/crm/connections/${conn.id}/trial-export`);
       toast({ kind: 'success', title: tActions('trialExport') });
     } catch {
       toast({ kind: 'error', title: tCommon('error') });

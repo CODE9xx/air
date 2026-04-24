@@ -94,8 +94,30 @@ def run_migrations_online() -> None:
     )
 
     with connectable.connect() as connection:
-        # Локальный search_path на время транзакции миграции.
-        connection.execute(text(f'SET LOCAL search_path = "{schema}", public'))
+        # Task #52.7 — fix "relation does not exist" на downstream pull/export
+        # -----------------------------------------------------------------
+        # Раньше здесь стоял только ``SET LOCAL search_path = "<schema>", public``
+        # ПЕРЕД ``context.begin_transaction()``. Это autobegin'ило транзакцию
+        # на Connection, а alembic 1.13+ ``begin_transaction()`` в некоторых
+        # путях сбрасывал её через ``Connection.begin()`` → новая транзакция
+        # без search_path, и ``metadata.create_all`` клал таблицы в ``public``
+        # вместо tenant-схемы. Симптом в проде: bootstrap job succeeded,
+        # а первый же ``INSERT INTO pipelines …`` в worker'е падал с
+        # ``UndefinedTable: relation "pipelines" does not exist``.
+        #
+        # Фикс: используем SA-native ``schema_translate_map`` — он переписывает
+        # все unqualified ссылки (``TenantBase.metadata.tables`` без
+        # ``schema=…``) в ``<schema>.<table>`` на этапе компиляции SQL. Работает
+        # независимо от транзакционных танцев alembic и не зависит от
+        # server-side search_path вообще.
+        #
+        # SET LOCAL оставлен ВНУТРИ alembic-транзакции как belt-and-suspenders:
+        # любой raw ``text()`` SQL в будущих миграциях (который
+        # schema_translate_map **не** переписывает — он работает только на
+        # уровне Core/ORM-таблиц) также попадёт в tenant-схему.
+        connection = connection.execution_options(
+            schema_translate_map={None: schema}
+        )
         context.configure(
             connection=connection,
             target_metadata=target_metadata,
@@ -106,6 +128,7 @@ def run_migrations_online() -> None:
             include_schemas=False,
         )
         with context.begin_transaction():
+            connection.execute(text(f'SET LOCAL search_path = "{schema}", public'))
             context.run_migrations()
 
 

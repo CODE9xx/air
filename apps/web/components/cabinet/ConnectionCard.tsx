@@ -39,6 +39,19 @@ export function ConnectionCard({ conn }: { conn: CrmConnection }) {
   const headline = amo?.name ?? conn.name ?? null;
   const subdomain = amo?.subdomain ?? conn.external_domain ?? null;
   const freshness = tokenFreshness(conn.token_expires_at);
+  // Task #52.4: показываем итоги первичной загрузки (pipelines/stages/users/
+  // contacts/deals) прямо в карточке, если есть. Данные пишет worker-job
+  // `pull_amocrm_core` в ``metadata.last_pull_counts`` (см. apps/worker/
+  // worker/jobs/crm_pull.py _persist_metadata_counts — после фикса Bug G).
+  const counts = conn.metadata?.last_pull_counts;
+  const hasCounts =
+    counts !== undefined &&
+    counts !== null &&
+    (counts.pipelines !== undefined ||
+      counts.stages !== undefined ||
+      counts.users !== undefined ||
+      counts.contacts !== undefined ||
+      counts.deals !== undefined);
 
   return (
     <Link
@@ -83,6 +96,25 @@ export function ConnectionCard({ conn }: { conn: CrmConnection }) {
           <dt>{t('lastSync')}</dt>
           <dd>{formatDate(conn.last_sync_at, locale)}</dd>
         </div>
+        {hasCounts && (
+          <div className="flex justify-between">
+            <dt className="truncate pr-2">{t('detail.pullCounts')}</dt>
+            <dd
+              className="truncate max-w-[55%] tabular-nums"
+              title={[
+                `${t('detail.pullPipelines')}: ${counts?.pipelines ?? 0}`,
+                `${t('detail.pullStages')}: ${counts?.stages ?? 0}`,
+                `${t('detail.pullUsers')}: ${counts?.users ?? 0}`,
+                `${t('detail.pullContacts')}: ${counts?.contacts ?? 0}`,
+                `${t('detail.pullDeals')}: ${counts?.deals ?? 0}`,
+              ].join(' • ')}
+            >
+              {counts?.pipelines ?? 0}/{counts?.stages ?? 0}/
+              {counts?.users ?? 0}/{counts?.contacts ?? 0}/
+              {counts?.deals ?? 0}
+            </dd>
+          </div>
+        )}
         <div className="flex justify-between">
           <dt>{t('tokenExpires')}</dt>
           <dd className="flex items-center gap-1">

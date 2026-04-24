@@ -196,6 +196,8 @@
       "addFirst": "Connect your first CRM",
       "emptyTitle": "No connections yet",
       "emptyBody": "Start by connecting amoCRM — it takes 2 minutes",
+      "noWorkspaceTitle": "No project available",
+      "noWorkspaceBody": "Create a project.",
       "connectAmoCRM": "Connect amoCRM (mock)",
       "chooseProvider": "Choose a CRM",
       "provider": "Provider",

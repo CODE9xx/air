@@ -44,9 +44,19 @@ from app.db.models import (
     Job,
     User,
     Workspace,
+    WorkspaceMember,
 )
 
 router = APIRouter(prefix="/crm", tags=["crm"])
+
+# Workspace-scoped router (Task #52.4) — монтируется без prefix="/crm",
+# чтобы путь был абсолютным `/workspaces/{workspace_id}/crm/connections`
+# согласно CONTRACT.md. Фронт по-этому пути и ходит:
+# см. apps/web/app/[locale]/app/connections/page.tsx — api.get(
+# `/workspaces/${wsId}/crm/connections`). До #52.4 роут отсутствовал →
+# FastAPI отдавал 404, connection не показывался после рефреша.
+ws_crm_router = APIRouter(tags=["crm"])
+
 settings = get_settings()
 
 
@@ -139,6 +149,62 @@ async def list_connections(
     return [_serialize_conn(c) for c in rows]
 
 
+# -------------------- Workspace-scoped list (CONTRACT.md, #52.4) --------------------
+
+@ws_crm_router.get("/workspaces/{workspace_id}/crm/connections")
+async def list_workspace_connections(
+    workspace_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> list[dict[str, Any]]:
+    """
+    Список CRM-подключений конкретного workspace (из CONTRACT.md).
+
+    Отдельный от ``GET /crm/connections`` путь, потому что фронт-кабинет
+    знает workspace_id из ``user.workspaces[0].id`` и бьёт сразу по
+    workspace-scoped path — без полагания на серверный ``get_current_workspace``
+    (который в будущем multi-workspace MVP станет неоднозначным).
+
+    Выборка идентична ``GET /crm/connections`` (owner или member ws,
+    все status != 'deleted' — active/pending/paused/failed включены;
+    external_button НЕ фильтруется). Возвращает 404 если workspace нет или
+    помечен deleted; 403 если юзер не owner и не в members.
+    """
+    ws = await session.get(Workspace, workspace_id)
+    if ws is None or ws.status == "deleted":
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"error": {"code": "not_found", "message": "Workspace not found"}},
+        )
+    if ws.owner_user_id != user.id:
+        member = (
+            await session.execute(
+                select(WorkspaceMember)
+                .where(WorkspaceMember.workspace_id == ws.id)
+                .where(WorkspaceMember.user_id == user.id)
+            )
+        ).scalar_one_or_none()
+        if member is None:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    "error": {
+                        "code": "forbidden",
+                        "message": "Not a workspace member",
+                    }
+                },
+            )
+    rows = (
+        await session.execute(
+            select(CrmConnection)
+            .where(CrmConnection.workspace_id == ws.id)
+            .where(CrmConnection.status != "deleted")
+            .order_by(CrmConnection.created_at.desc())
+        )
+    ).scalars().all()
+    return [_serialize_conn(c) for c in rows]
+
+
 @router.post("/connections/mock-amocrm", status_code=status.HTTP_201_CREATED)
 async def create_mock_amocrm(
     body: CreateMockConnectionRequest,
@@ -174,18 +240,25 @@ async def create_mock_amocrm(
     session.add(conn)
     await session.flush()
 
-    # Enqueue bootstrap schema.
-    rq_id = enqueue("bootstrap_tenant_schema", {"connection_id": str(conn.id)})
+    # Task #52.6: create public.jobs row FIRST (to get job.id), THEN enqueue
+    # with job_row_id in worker kwargs, THEN set rq_job_id, THEN commit.
+    # Без этого worker получает job_row_id=None → mark_job_* no-op'ит →
+    # status навсегда залипает в "queued".
+    payload = {"connection_id": str(conn.id)}
     job = Job(
         workspace_id=ws.id,
         crm_connection_id=conn.id,
         kind="bootstrap_tenant_schema",
         queue=queue_for_kind("bootstrap_tenant_schema"),
         status="queued",
-        payload={"connection_id": str(conn.id)},
-        rq_job_id=rq_id,
+        payload=payload,
     )
     session.add(job)
+    await session.flush()  # populates job.id from server_default gen_random_uuid()
+    rq_id = enqueue(
+        "bootstrap_tenant_schema", payload, job_row_id=str(job.id)
+    )
+    job.rq_job_id = rq_id
 
     await session.commit()
     return _serialize_conn(conn)
@@ -365,18 +438,28 @@ async def delete_confirm(
     req.confirmed_at = _now()
     conn.status = "deleting"
 
-    # Enqueue delete job.
-    rq_id = enqueue("delete_connection_data", {"connection_id": str(conn.id), "deletion_request_id": str(req.id)})
+    # Task #52.6: create row first → enqueue with job_row_id → set rq_id.
+    # Note: payload в public.jobs не содержит deletion_request_id
+    # (исходное поведение), а worker kwargs — содержит через enqueue-payload.
+    db_payload = {"connection_id": str(conn.id)}
+    worker_payload = {
+        "connection_id": str(conn.id),
+        "deletion_request_id": str(req.id),
+    }
     job = Job(
         workspace_id=ws.id,
         crm_connection_id=conn.id,
         kind="delete_connection_data",
         queue=queue_for_kind("delete_connection_data"),
         status="queued",
-        payload={"connection_id": str(conn.id)},
-        rq_job_id=rq_id,
+        payload=db_payload,
     )
     session.add(job)
+    await session.flush()
+    rq_id = enqueue(
+        "delete_connection_data", worker_payload, job_row_id=str(job.id)
+    )
+    job.rq_job_id = rq_id
     await session.commit()
 
     return {"job_id": str(job.id)}
@@ -396,17 +479,20 @@ async def audit_run(
             status_code=status.HTTP_409_CONFLICT,
             detail={"error": {"code": "conflict", "message": "Connection inactive"}},
         )
-    rq_id = enqueue("run_audit_report", {"connection_id": str(conn.id)})
+    # Task #52.6: row-first → enqueue with job_row_id.
+    payload = {"connection_id": str(conn.id)}
     job = Job(
         workspace_id=ws.id,
         crm_connection_id=conn.id,
         kind="run_audit_report",
         queue=queue_for_kind("run_audit_report"),
         status="queued",
-        payload={"connection_id": str(conn.id)},
-        rq_job_id=rq_id,
+        payload=payload,
     )
     session.add(job)
+    await session.flush()
+    rq_id = enqueue("run_audit_report", payload, job_row_id=str(job.id))
+    job.rq_job_id = rq_id
     await session.commit()
     return JobCreatedResponse(job_id=str(job.id))
 
@@ -456,17 +542,21 @@ async def trial_export(
     session: AsyncSession = Depends(get_session),
 ) -> JobCreatedResponse:
     conn, ws = await _get_conn_for_user(session, user, connection_id)
-    rq_id = enqueue("build_export_zip", {"connection_id": str(conn.id), "trial": True})
+    payload = {"connection_id": str(conn.id), "trial": True}
     job = Job(
         workspace_id=ws.id,
         crm_connection_id=conn.id,
         kind="build_export_zip",
         queue=queue_for_kind("build_export_zip"),
         status="queued",
-        payload={"connection_id": str(conn.id), "trial": True},
-        rq_job_id=rq_id,
+        payload=payload,
     )
     session.add(job)
+    await session.flush()  # populates job.id (Task #52.6)
+    rq_id = enqueue(
+        "build_export_zip", payload, job_row_id=str(job.id)
+    )
+    job.rq_job_id = rq_id
     await session.commit()
     return JobCreatedResponse(job_id=str(job.id))
 
@@ -514,17 +604,21 @@ async def full_export(
             status_code=status.HTTP_402_PAYMENT_REQUIRED,
             detail={"error": {"code": "conflict", "message": "Insufficient balance"}},
         )
-    rq_id = enqueue("build_export_zip", {"connection_id": str(conn.id), "trial": False})
+    payload = {"connection_id": str(conn.id), "trial": False}
     job = Job(
         workspace_id=ws.id,
         crm_connection_id=conn.id,
         kind="build_export_zip",
         queue=queue_for_kind("build_export_zip"),
         status="queued",
-        payload={"connection_id": str(conn.id), "trial": False},
-        rq_job_id=rq_id,
+        payload=payload,
     )
     session.add(job)
+    await session.flush()  # populates job.id (Task #52.6)
+    rq_id = enqueue(
+        "build_export_zip", payload, job_row_id=str(job.id)
+    )
+    job.rq_job_id = rq_id
     await session.commit()
     return JobCreatedResponse(job_id=str(job.id))
 
@@ -543,17 +637,19 @@ async def sync_connection(
             status_code=status.HTTP_409_CONFLICT,
             detail={"error": {"code": "conflict", "message": "Cannot sync in current state"}},
         )
-    rq_id = enqueue("fetch_crm_data", {"connection_id": str(conn.id)})
+    payload = {"connection_id": str(conn.id)}
     job = Job(
         workspace_id=ws.id,
         crm_connection_id=conn.id,
         kind="fetch_crm_data",
         queue=queue_for_kind("fetch_crm_data"),
         status="queued",
-        payload={"connection_id": str(conn.id)},
-        rq_job_id=rq_id,
+        payload=payload,
     )
     session.add(job)
+    await session.flush()  # populates job.id (Task #52.6)
+    rq_id = enqueue("fetch_crm_data", payload, job_row_id=str(job.id))
+    job.rq_job_id = rq_id
     await session.commit()
     return JobCreatedResponse(job_id=str(job.id))
 

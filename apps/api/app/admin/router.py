@@ -443,24 +443,29 @@ async def admin_job_restart(
             status_code=status.HTTP_404_NOT_FOUND,
             detail={"error": {"code": "not_found", "message": "Job not found"}},
         )
-    rq_id = enqueue(job.kind, job.payload or {})
+    # Task #52.6: создаём новую Job row, flush для получения id,
+    # потом enqueue с job_row_id — без этого worker.mark_job_* никогда
+    # не обновит status restart'нутого job'а.
+    payload = job.payload or {}
     new_job = Job(
         workspace_id=job.workspace_id,
         crm_connection_id=job.crm_connection_id,
         kind=job.kind,
         queue=queue_for_kind(job.kind),
         status="queued",
-        payload=job.payload or {},
-        rq_job_id=rq_id,
+        payload=payload,
     )
     session.add(new_job)
+    await session.flush()
+    rq_id = enqueue(job.kind, payload, job_row_id=str(new_job.id))
+    new_job.rq_job_id = rq_id
     session.add(
         AdminAuditLog(
             admin_user_id=admin.id,
             action="job_restart",
             target_type="job",
             target_id=job.id,
-            metadata_json={"new_job_id": str(new_job.id) if new_job.id else None},
+            metadata_json={"new_job_id": str(new_job.id)},
             ip=client_ip(request),
         )
     )
