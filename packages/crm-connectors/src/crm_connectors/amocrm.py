@@ -14,8 +14,9 @@ AmoCrmConnector — реальный коннектор к amoCRM.
 * `fetch_deals`          — REAL (Phase 2A step 4): GET /api/v4/leads
   с пагинацией и `since` через `filter[updated_at][from]`.
 * `fetch_contacts`       — REAL (Phase 2A step 4): GET /api/v4/contacts.
+* `fetch_companies`      — REAL (Phase 2B step 1): GET /api/v4/companies.
 * остальные `fetch_*`    — NotImplementedError, Phase 2B/2C (calls, chats,
-  tasks, notes, companies) — см. ``docs/api/CONTRACT.md §CRM``.
+  tasks, notes) — см. ``docs/api/CONTRACT.md §CRM``.
 
 Endpoint-ы amoCRM:
 
@@ -317,6 +318,44 @@ class AmoCrmConnector(CRMConnector):
             elif code == "EMAIL" and email is None:
                 email = val
         return phone, email
+
+    @staticmethod
+    def _first_custom_field_value(
+        custom_fields_values: Any,
+        *,
+        field_codes: set[str] | None = None,
+        field_name_contains: tuple[str, ...] = (),
+    ) -> Optional[str]:
+        """Return first string custom-field value matching stable code or name hint."""
+        if not isinstance(custom_fields_values, list):
+            return None
+        normalized_codes = {code.upper() for code in (field_codes or set())}
+        normalized_names = tuple(part.lower() for part in field_name_contains)
+        for cfv in custom_fields_values:
+            if not isinstance(cfv, dict):
+                continue
+            code = str(cfv.get("field_code") or "").upper()
+            name = str(cfv.get("field_name") or "").lower()
+            if normalized_codes and code in normalized_codes:
+                matched = True
+            elif normalized_names and any(part in name for part in normalized_names):
+                matched = True
+            else:
+                matched = False
+            if not matched:
+                continue
+            values = cfv.get("values")
+            if not isinstance(values, list) or not values:
+                continue
+            first = values[0]
+            if not isinstance(first, dict):
+                continue
+            value = first.get("value")
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+            if isinstance(value, (int, float)):
+                return str(value)
+        return None
 
     def _paginated_get(
         self,
@@ -745,8 +784,48 @@ class AmoCrmConnector(CRMConnector):
         since: Optional[datetime] = None,
         limit: Optional[int] = None,
     ) -> Iterable[RawCompany]:
-        """Phase 2B — companies pull. В Phase 2A не включён."""
-        raise NotImplementedError(_V1_NOT_IMPLEMENTED_MSG.format(method="fetch_companies"))
+        """Выгружает компании (``/api/v4/companies``)."""
+        params: dict[str, Any] = {}
+        if since is not None:
+            params["filter[updated_at][from]"] = self._to_epoch(since)
+
+        yielded = 0
+        for item in self._paginated_get(
+            "companies", access_token, items_key="companies", params=params
+        ):
+            if limit is not None and yielded >= limit:
+                return
+            yielded += 1
+
+            custom_fields = item.get("custom_fields_values")
+            phone, _email = self._extract_phone_email(custom_fields)
+            inn = self._first_custom_field_value(
+                custom_fields,
+                field_codes={"INN"},
+                field_name_contains=("инн", "inn"),
+            )
+            website = self._first_custom_field_value(
+                custom_fields,
+                field_codes={"WEB", "SITE", "URL"},
+                field_name_contains=("сайт", "site", "web", "url"),
+            )
+            responsible_user_id = item.get("responsible_user_id")
+
+            yield RawCompany(
+                crm_id=str(item.get("id", "")),
+                name=item.get("name"),
+                inn=inn,
+                phone=phone,
+                website=website,
+                responsible_user_id=(
+                    str(responsible_user_id)
+                    if responsible_user_id is not None
+                    else None
+                ),
+                created_at=self._from_epoch(item.get("created_at")),
+                updated_at=self._from_epoch(item.get("updated_at")),
+                raw_payload=item,
+            )
 
     def fetch_pipelines(self, access_token: str) -> Iterable[RawPipeline]:
         """

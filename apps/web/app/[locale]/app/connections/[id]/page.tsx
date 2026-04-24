@@ -45,6 +45,18 @@ type JobStatus = {
   id: string;
   status: 'queued' | 'running' | 'succeeded' | 'failed' | string;
   error?: string | null;
+  result?: {
+    progress?: JobProgress;
+  } | null;
+};
+
+type JobProgress = {
+  stage?: string;
+  completed_steps?: number;
+  total_steps?: number;
+  percent?: number;
+  counts?: Record<string, number>;
+  updated_at?: string;
 };
 
 function inputDate(value: Date): string {
@@ -87,6 +99,7 @@ export default function ConnectionDetailPage() {
   const [selectedPipelineIds, setSelectedPipelineIds] = useState<string[]>([]);
   const [exportJobId, setExportJobId] = useState<string | null>(null);
   const [exportJobStatus, setExportJobStatus] = useState<string | null>(null);
+  const [exportJobProgress, setExportJobProgress] = useState<JobProgress | null>(null);
   const [exportRunning, setExportRunning] = useState(false);
   const [exportQuote, setExportQuote] = useState<FullExportTokenQuote | null>(null);
   const [exportQuoteLoading, setExportQuoteLoading] = useState(false);
@@ -264,6 +277,7 @@ export default function ConnectionDetailPage() {
       );
       setExportJobId(res.job_id);
       setExportJobStatus('queued');
+      setExportJobProgress(null);
       toast({ kind: 'success', title: tActions('realExportStarted') });
     } catch {
       toast({ kind: 'error', title: tCommon('error') });
@@ -277,6 +291,7 @@ export default function ConnectionDetailPage() {
       try {
         const job = await api.get<JobStatus>(`/jobs/${exportJobId}`);
         setExportJobStatus(job.status);
+        setExportJobProgress(job.result?.progress ?? null);
         if (job.status === 'succeeded') {
           window.clearInterval(timer);
           setExportRunning(false);
@@ -317,6 +332,7 @@ export default function ConnectionDetailPage() {
     : t('detail.lastTrialExportAt');
   const isMock = Boolean(conn.metadata?.mock);
   const activeExport = conn.metadata?.active_export;
+  const sync = conn.sync;
   const normalizedCallHours = Number.parseFloat(callHours.replace(',', '.'));
   const callMinutes = Number.isFinite(normalizedCallHours)
     ? Math.max(0, Math.round(normalizedCallHours * 60))
@@ -415,6 +431,18 @@ export default function ConnectionDetailPage() {
                   : t('detail.allPipelines')
               }
             />
+          </div>
+        </section>
+      )}
+
+      {sync && (
+        <section className="card p-5 text-sm space-y-3">
+          <h2 className="text-lg font-semibold">Автообновление данных</h2>
+          <div className="grid md:grid-cols-4 gap-4">
+            <Field label="Режим" value="Догрузка изменений" />
+            <Field label="Тариф" value={sync.plan_key ?? 'free'} />
+            <Field label="Частота" value={formatCadence(sync.cadence_seconds)} />
+            <Field label="Следующее обновление" value={formatDate(sync.next_auto_sync_at, locale)} />
           </div>
         </section>
       )}
@@ -523,6 +551,24 @@ export default function ConnectionDetailPage() {
               </Badge>
             )}
           </div>
+          {exportJobProgress && (
+            <div className="rounded-md border border-border bg-muted p-3">
+              <div className="flex items-center justify-between gap-3 text-sm">
+                <span>Этап: {formatJobStage(exportJobProgress.stage)}</span>
+                <span className="font-semibold tabular-nums">
+                  {typeof exportJobProgress.percent === 'number'
+                    ? `${exportJobProgress.percent}%`
+                    : '—'}
+                </span>
+              </div>
+              <div className="mt-2 h-2 overflow-hidden rounded-full bg-white">
+                <div
+                  className="h-full bg-primary transition-all"
+                  style={{ width: `${Math.min(100, Math.max(0, exportJobProgress.percent ?? 0))}%` }}
+                />
+              </div>
+            </div>
+          )}
           <div className="flex flex-wrap gap-2">
             {(['allTime', 'last12Months', 'currentYear', 'custom'] as ExportPreset[]).map((preset) => (
               <Button
@@ -691,4 +737,24 @@ function formatCompactTokens(value: number): string {
   if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
   if (value >= 1_000) return `${(value / 1_000).toFixed(1)}K`;
   return value.toLocaleString();
+}
+
+function formatCadence(seconds: number | undefined): string {
+  if (!seconds) return '—';
+  if (seconds <= 15 * 60) return 'каждые 15 минут';
+  if (seconds <= 60 * 60) return 'каждый час';
+  if (seconds <= 24 * 60 * 60) return 'раз в день';
+  return `раз в ${Math.round(seconds / 3600)} ч`;
+}
+
+function formatJobStage(stage: string | undefined): string {
+  const labels: Record<string, string> = {
+    pipelines: 'воронки',
+    stages: 'этапы',
+    users: 'пользователи',
+    companies: 'компании',
+    contacts: 'контакты',
+    deals: 'сделки',
+  };
+  return stage ? labels[stage] ?? stage : 'ожидание';
 }

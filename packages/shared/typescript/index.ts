@@ -129,6 +129,13 @@ export interface CrmConnection {
   token_expires_at?: string | null;
   last_error?: string | null;
   metadata?: CrmConnectionMetadata;
+  sync?: {
+    mode?: 'incremental' | string;
+    plan_key?: string;
+    cadence_seconds?: number;
+    last_auto_sync_at?: string | null;
+    next_auto_sync_at?: string | null;
+  };
   created_at?: string;
   // #44.6 — top-level поля для удобства UI.
   amocrm_auth_mode?: 'static_client' | 'external_button' | null;

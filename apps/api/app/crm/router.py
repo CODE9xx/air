@@ -81,13 +81,68 @@ _TOKEN_ESTIMATE_LABELS = {
 }
 _CALL_TOKENS_PER_MINUTE_LOW = 350
 _CALL_TOKENS_PER_MINUTE_HIGH = 570
+_SYNC_CADENCE_SECONDS = {
+    "manual": 24 * 60 * 60,
+    "free": 24 * 60 * 60,
+    "start": 24 * 60 * 60,
+    "team": 60 * 60,
+    "pro": 15 * 60,
+    "enterprise": 15 * 60,
+}
 
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def _serialize_conn(c: CrmConnection) -> dict[str, Any]:
+def _connection_incremental_since_iso(conn: CrmConnection) -> str | None:
+    """Prefer successful real pull timestamp; fallback to legacy last_sync_at."""
+    metadata = conn.metadata_json or {}
+    last_pull_at = metadata.get("last_pull_at")
+    if isinstance(last_pull_at, str) and last_pull_at.strip():
+        return last_pull_at.strip()
+    if conn.last_sync_at:
+        dt = conn.last_sync_at
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc).isoformat()
+    return None
+
+
+def _parse_sync_datetime(value: Any) -> datetime | None:
+    if isinstance(value, datetime):
+        dt = value
+    elif isinstance(value, str) and value.strip():
+        try:
+            dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    else:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def _sync_summary(c: CrmConnection, plan_key: str | None = None) -> dict[str, Any]:
+    key = str(plan_key or "free").lower()
+    cadence = _SYNC_CADENCE_SECONDS.get(key, _SYNC_CADENCE_SECONDS["free"])
+    metadata = c.metadata_json or {}
+    last_pull = _parse_sync_datetime(metadata.get("last_pull_at")) or _parse_sync_datetime(
+        c.last_sync_at
+    )
+    return {
+        "mode": "incremental",
+        "plan_key": key,
+        "cadence_seconds": cadence,
+        "last_auto_sync_at": metadata.get("last_auto_sync_at"),
+        "next_auto_sync_at": (
+            (last_pull + timedelta(seconds=cadence)).isoformat() if last_pull else None
+        ),
+    }
+
+
+def _serialize_conn(c: CrmConnection, *, plan_key: str | None = None) -> dict[str, Any]:
     """Возвращаем безопасную выборку полей. НЕ включаем токены."""
     return {
         "id": str(c.id),
@@ -102,6 +157,7 @@ def _serialize_conn(c: CrmConnection) -> dict[str, Any]:
         "token_expires_at": c.token_expires_at.isoformat() if c.token_expires_at else None,
         "last_error": c.last_error,
         "metadata": c.metadata_json or {},
+        "sync": _sync_summary(c, plan_key=plan_key),
         "created_at": c.created_at.isoformat() if c.created_at else None,
         # #44.6 — public-safe поля external_button.
         "amocrm_auth_mode": c.amocrm_auth_mode,
@@ -418,7 +474,16 @@ async def get_connection(
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     conn, _ = await _get_conn_for_user(session, user, connection_id)
-    return _serialize_conn(conn)
+    plan_key = (
+        await session.execute(
+            text(
+                "SELECT plan_key FROM token_accounts "
+                "WHERE workspace_id = CAST(:workspace_id AS UUID)"
+            ),
+            {"workspace_id": str(conn.workspace_id)},
+        )
+    ).scalar_one_or_none()
+    return _serialize_conn(conn, plan_key=plan_key)
 
 
 @router.patch("/connections/{connection_id}")
@@ -976,18 +1041,25 @@ async def sync_connection(
             status_code=status.HTTP_409_CONFLICT,
             detail={"error": {"code": "conflict", "message": "Cannot sync in current state"}},
         )
-    payload = {"connection_id": str(conn.id)}
+    payload = {
+        "connection_id": str(conn.id),
+        "first_pull": False,
+        "cleanup_trial": False,
+    }
+    since_iso = _connection_incremental_since_iso(conn)
+    if since_iso:
+        payload["since_iso"] = since_iso
     job = Job(
         workspace_id=ws.id,
         crm_connection_id=conn.id,
-        kind="fetch_crm_data",
-        queue=queue_for_kind("fetch_crm_data"),
+        kind="pull_amocrm_core",
+        queue=queue_for_kind("pull_amocrm_core"),
         status="queued",
         payload=payload,
     )
     session.add(job)
     await session.flush()  # populates job.id (Task #52.6)
-    rq_id = enqueue("fetch_crm_data", payload, job_row_id=str(job.id))
+    rq_id = enqueue("pull_amocrm_core", payload, job_row_id=str(job.id))
     job.rq_job_id = rq_id
     await session.commit()
     return JobCreatedResponse(job_id=str(job.id))

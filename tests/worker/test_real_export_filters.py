@@ -39,6 +39,55 @@ def test_amocrm_fetch_deals_sends_created_at_and_pipeline_filters():
     }
 
 
+def test_amocrm_fetch_companies_sends_updated_at_filter_and_parses_fields():
+    from crm_connectors.amocrm import AmoCrmConnector
+
+    captured: dict[str, object] = {}
+
+    def fake_paginated_get(path, access_token, *, items_key, params=None, page_limit=250):
+        captured["path"] = path
+        captured["access_token"] = access_token
+        captured["items_key"] = items_key
+        captured["params"] = params
+        return iter(
+            [
+                {
+                    "id": 555,
+                    "name": "Code9 LLC",
+                    "responsible_user_id": 777,
+                    "created_at": 1735689600,
+                    "updated_at": 1735693200,
+                    "custom_fields_values": [
+                        {"field_code": "PHONE", "values": [{"value": "+79990000000"}]},
+                        {"field_name": "ИНН", "values": [{"value": "7700000000"}]},
+                        {"field_code": "WEB", "values": [{"value": "https://code9.ru"}]},
+                    ],
+                }
+            ]
+        )
+
+    connector = AmoCrmConnector(client_id="cid", client_secret="secret", subdomain="demo")
+    with patch.object(connector, "_paginated_get", side_effect=fake_paginated_get):
+        rows = list(
+            connector.fetch_companies(
+                "token",
+                since=datetime(2025, 1, 1, tzinfo=timezone.utc),
+            )
+        )
+
+    assert captured["path"] == "companies"
+    assert captured["items_key"] == "companies"
+    assert captured["access_token"] == "token"
+    assert captured["params"] == {"filter[updated_at][from]": 1735689600}
+    assert len(rows) == 1
+    assert rows[0].crm_id == "555"
+    assert rows[0].name == "Code9 LLC"
+    assert rows[0].phone == "+79990000000"
+    assert rows[0].inn == "7700000000"
+    assert rows[0].website == "https://code9.ru"
+    assert rows[0].responsible_user_id == "777"
+
+
 def test_amocrm_paginated_get_retries_transient_request_errors(monkeypatch):
     import httpx
 
@@ -164,7 +213,7 @@ def test_pull_amocrm_core_signature_accepts_real_export_filters():
     from worker.jobs.crm_pull import pull_amocrm_core
 
     sig = inspect.signature(pull_amocrm_core)
-    for name in ("date_from_iso", "date_to_iso", "pipeline_ids", "cleanup_trial"):
+    for name in ("date_from_iso", "date_to_iso", "pipeline_ids", "cleanup_trial", "auto_sync"):
         assert name in sig.parameters
         assert sig.parameters[name].kind == inspect.Parameter.KEYWORD_ONLY
 
@@ -176,7 +225,14 @@ def test_build_active_export_metadata_records_filter_and_counts():
         date_from_iso="2025-01-01",
         date_to_iso="2025-12-31",
         pipeline_ids=["111", "222"],
-        counts={"pipelines": 2, "stages": 7, "users": 4, "contacts": 25, "deals": 40},
+        counts={
+            "pipelines": 2,
+            "stages": 7,
+            "users": 4,
+            "companies": 8,
+            "contacts": 25,
+            "deals": 40,
+        },
     )
 
     assert result["mode"] == "real"
@@ -184,6 +240,7 @@ def test_build_active_export_metadata_records_filter_and_counts():
     assert result["date_from"] == "2025-01-01"
     assert result["date_to"] == "2025-12-31"
     assert result["pipeline_ids"] == ["111", "222"]
+    assert result["counts"]["companies"] == 8
     assert result["counts"]["deals"] == 40
     assert result["completed_at"]
 

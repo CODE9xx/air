@@ -60,6 +60,89 @@ def mark_job_failed(job_row_id: str | None, error: str) -> None:
         )
 
 
+def update_job_progress(
+    job_row_id: str | None,
+    *,
+    stage: str,
+    completed_steps: int,
+    total_steps: int,
+    counts: dict[str, Any] | None = None,
+) -> None:
+    """Merge public, non-secret progress details into jobs.result."""
+    if not job_row_id:
+        return
+    safe_total = max(1, int(total_steps))
+    safe_completed = min(max(0, int(completed_steps)), safe_total)
+    progress = {
+        "stage": stage,
+        "completed_steps": safe_completed,
+        "total_steps": safe_total,
+        "percent": int(round((safe_completed / safe_total) * 100)),
+        "counts": counts or {},
+        "updated_at": _now().isoformat(),
+    }
+    try:
+        with sync_session() as sess:
+            sess.execute(
+                text(
+                    "UPDATE jobs SET result = COALESCE(result, '{}'::jsonb) "
+                    "  || CAST(:patch AS JSONB) "
+                    "WHERE id = CAST(:rid AS UUID)"
+                ),
+                {"rid": job_row_id, "patch": _json({"progress": progress})},
+            )
+    except Exception:
+        return
+
+
+def create_job_notification(
+    job_row_id: str | None,
+    *,
+    kind: str,
+    title: str,
+    body: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> None:
+    """Create a workspace notification for a job without exposing job payload secrets."""
+    if not job_row_id:
+        return
+    try:
+        with sync_session() as sess:
+            row = sess.execute(
+                text(
+                    "SELECT workspace_id, crm_connection_id "
+                    "FROM jobs WHERE id = CAST(:rid AS UUID)"
+                ),
+                {"rid": job_row_id},
+            ).fetchone()
+            if row is None or row[0] is None:
+                return
+            sess.execute(
+                text(
+                    "INSERT INTO notifications("
+                    "  workspace_id, user_id, kind, title, body, metadata"
+                    ") VALUES ("
+                    "  :workspace_id, NULL, :kind, :title, :body, CAST(:metadata AS JSONB)"
+                    ")"
+                ),
+                {
+                    "workspace_id": row[0],
+                    "kind": kind,
+                    "title": title,
+                    "body": body,
+                    "metadata": _json(
+                        {
+                            "job_id": job_row_id,
+                            "crm_connection_id": str(row[1]) if row[1] else None,
+                            **(metadata or {}),
+                        }
+                    ),
+                },
+            )
+    except Exception:
+        return
+
+
 def charge_token_reservation_for_job(
     job_row_id: str | None,
     result: dict[str, Any] | None = None,

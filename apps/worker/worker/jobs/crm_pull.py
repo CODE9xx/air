@@ -10,8 +10,8 @@ CRM pull jobs (Phase 2A step 5).
 2. При необходимости рефрешит access_token (inline вызов ``refresh_token``),
    если до экспирации осталось ≤ 120s.
 3. Инстанцирует ``AmoCrmConnector(client_id, client_secret, subdomain)``.
-4. Качает 4 ядра в строгом порядке (зависимости FK):
-   pipelines → stages → users → contacts → deals.
+4. Качает ядро в строгом порядке (зависимости FK):
+   pipelines → stages → users → companies → contacts → deals.
 5. Каждая сущность UPSERT'ится в raw_* + нормализованную таблицу
    внутри tenant-schema (search_path trick — как в ``trial_export``).
 6. Ведёт in-memory маппинг ``external_id → tenant UUID`` для разрешения FK
@@ -51,10 +51,12 @@ from ..lib.crypto import decrypt_token
 from ..lib.db import sync_session
 from ._common import (
     charge_token_reservation_for_job,
+    create_job_notification,
     mark_job_failed,
     mark_job_running,
     mark_job_succeeded,
     release_token_reservation_for_job,
+    update_job_progress,
 )
 
 logger = logging.getLogger("code9.worker.crm_pull")
@@ -139,7 +141,7 @@ def _fetch_connection_row(connection_id: str) -> dict[str, Any]:
                 "       access_token_encrypted, refresh_token_encrypted, "
                 "       token_expires_at, "
                 "       amocrm_auth_mode, amocrm_client_id, "
-                "       amocrm_client_secret_encrypted "
+                "       amocrm_client_secret_encrypted, metadata "
                 "FROM crm_connections "
                 "WHERE id = CAST(:cid AS UUID)"
             ),
@@ -158,6 +160,7 @@ def _fetch_connection_row(connection_id: str) -> dict[str, Any]:
         "amocrm_auth_mode": row[7],
         "amocrm_client_id": row[8],
         "amocrm_client_secret_encrypted": row[9],
+        "metadata": row[10] or {},
     }
 
 
@@ -300,7 +303,7 @@ def _pipeline_filter_placeholders(
 
 
 def _tenant_table_count(sess, *, schema: str, table: str) -> int:
-    allowed = {"pipelines", "stages", "crm_users", "contacts", "deals"}
+    allowed = {"pipelines", "stages", "crm_users", "companies", "contacts", "deals"}
     if table not in allowed:
         raise ValueError(f"Unsupported tenant count table: {table}")
     q_schema = f'"{schema}"'
@@ -358,6 +361,7 @@ def _tenant_active_export_counts(
         "pipelines": _tenant_table_count(sess, schema=schema, table="pipelines"),
         "stages": _tenant_table_count(sess, schema=schema, table="stages"),
         "users": _tenant_table_count(sess, schema=schema, table="crm_users"),
+        "companies": _tenant_table_count(sess, schema=schema, table="companies"),
         "contacts": _tenant_table_count(sess, schema=schema, table="contacts"),
         "deals": _tenant_active_deals_count(
             sess,
@@ -428,6 +432,16 @@ def _upsert_raw(
             "payload": json.dumps(payload, ensure_ascii=False, default=str),
         },
     )
+
+
+def _load_external_id_map(sess, *, schema: str, table: str) -> dict[str, str]:
+    """Load tenant normalized row ids by external_id for FK resolution."""
+    allowed = {"pipelines", "stages", "crm_users", "companies", "contacts"}
+    if table not in allowed:
+        raise ValueError(f"Unsupported external_id map table: {table}")
+    q_schema = f'"{schema}"'
+    rows = sess.execute(text(f"SELECT external_id, id FROM {q_schema}.{table}")).fetchall()
+    return {str(row[0]): str(row[1]) for row in rows if row[0] and row[1]}
 
 
 # ---------------------------------------------------------------------------
@@ -561,11 +575,63 @@ def _pull_users(
     return ext_to_uuid
 
 
+def _pull_companies(
+    sess,
+    connector,
+    access_token: str,
+    user_map: dict[str, str],
+    since: datetime | None,
+    *,
+    schema: str,
+) -> dict[str, str]:
+    """Тянет компании. Маппинг external_id → UUID. FK responsible_user_id → crm_users."""
+    ext_to_uuid: dict[str, str] = {}
+    q_schema = f'"{schema}"'
+
+    for raw_c in connector.fetch_companies(access_token, since=since):
+        ext_id = raw_c.crm_id
+        if not ext_id:
+            continue
+        _upsert_raw(sess, schema, "raw_companies", ext_id, raw_c.raw_payload)
+
+        inn_hash = _hash_pii(raw_c.inn.strip()) if raw_c.inn else None
+        resp_uuid = user_map.get(raw_c.responsible_user_id) if raw_c.responsible_user_id else None
+
+        tenant_uuid = _uuid()
+        result = sess.execute(
+            text(
+                f"INSERT INTO {q_schema}.companies(id, external_id, name, inn_hash, "
+                "                     created_at_external, fetched_at) "
+                "VALUES (CAST(:id AS UUID), :ext, :name, :inn, :ca, NOW()) "
+                "ON CONFLICT (external_id) DO UPDATE SET "
+                "  name = EXCLUDED.name, "
+                "  inn_hash = EXCLUDED.inn_hash, "
+                "  created_at_external = EXCLUDED.created_at_external, fetched_at = NOW() "
+                "RETURNING id"
+            ),
+            {
+                "id": tenant_uuid,
+                "ext": ext_id,
+                "name": raw_c.name,
+                "inn": inn_hash,
+                "ca": raw_c.created_at,
+            },
+        )
+        # Tenant schema currently has no responsible_user_id/phone/website columns
+        # for companies; those fields stay in raw_companies.payload.
+        _ = resp_uuid
+        row = result.fetchone()
+        if row and row[0]:
+            ext_to_uuid[ext_id] = str(row[0])
+    return ext_to_uuid
+
+
 def _pull_contacts(
     sess,
     connector,
     access_token: str,
     user_map: dict[str, str],
+    since: datetime | None,
     limit: int | None,
     *,
     schema: str,
@@ -576,7 +642,7 @@ def _pull_contacts(
     ext_to_uuid: dict[str, str] = {}
     q_schema = f'"{schema}"'
 
-    for raw_c in connector.fetch_contacts(access_token, limit=limit):
+    for raw_c in connector.fetch_contacts(access_token, since=since, limit=limit):
         ext_id = raw_c.crm_id
         if not ext_id:
             continue
@@ -626,6 +692,7 @@ def _pull_deals(
     pipeline_map: dict[str, str],
     stage_map: dict[str, str],
     user_map: dict[str, str],
+    company_map: dict[str, str],
     contact_map: dict[str, str],
     since: datetime | None,
     created_from: datetime | None,
@@ -636,8 +703,7 @@ def _pull_deals(
 ) -> int:
     """
     Тянет сделки. Возвращает количество обработанных сделок.
-    FK: pipeline_id, stage_id, responsible_user_id, contact_id.
-    Компании пока не поднимаем (Phase 2B) → company_id=NULL.
+    FK: pipeline_id, stage_id, responsible_user_id, contact_id, company_id.
     """
     processed = 0
     q_schema = f'"{schema}"'
@@ -658,6 +724,7 @@ def _pull_deals(
         stage_uuid = stage_map.get(raw_d.stage_id) if raw_d.stage_id else None
         resp_uuid = user_map.get(raw_d.responsible_user_id) if raw_d.responsible_user_id else None
         contact_uuid = contact_map.get(raw_d.contact_id) if raw_d.contact_id else None
+        company_uuid = company_map.get(raw_d.company_id) if raw_d.company_id else None
 
         price_cents: int | None = None
         if raw_d.price is not None:
@@ -674,13 +741,14 @@ def _pull_deals(
                 "        CAST(NULLIF(:sid, '') AS UUID), :status, "
                 "        CAST(NULLIF(:uid, '') AS UUID), "
                 "        CAST(NULLIF(:cid, '') AS UUID), "
-                "        NULL, :price, :cur, :ca, :ua, :cla, NOW()) "
+                "        CAST(NULLIF(:coid, '') AS UUID), "
+                "        :price, :cur, :ca, :ua, :cla, NOW()) "
                 "ON CONFLICT (external_id) DO UPDATE SET "
                 "  name = EXCLUDED.name, pipeline_id = EXCLUDED.pipeline_id, "
                 "  stage_id = EXCLUDED.stage_id, status = EXCLUDED.status, "
                 "  responsible_user_id = EXCLUDED.responsible_user_id, "
                 "  contact_id = EXCLUDED.contact_id, price_cents = EXCLUDED.price_cents, "
-                "  currency = EXCLUDED.currency, "
+                "  company_id = EXCLUDED.company_id, currency = EXCLUDED.currency, "
                 "  created_at_external = EXCLUDED.created_at_external, "
                 "  updated_at_external = EXCLUDED.updated_at_external, "
                 "  closed_at_external = EXCLUDED.closed_at_external, fetched_at = NOW()"
@@ -694,6 +762,7 @@ def _pull_deals(
                 "status": raw_d.status,
                 "uid": resp_uuid or "",
                 "cid": contact_uuid or "",
+                "coid": company_uuid or "",
                 "price": price_cents,
                 "cur": raw_d.currency,
                 "ca": raw_d.created_at,
@@ -720,6 +789,7 @@ def pull_amocrm_core(
     cleanup_trial: bool = False,
     deals_limit: int | None = None,
     contacts_limit: int | None = None,
+    auto_sync: bool = False,
     job_row_id: str | None = None,
 ) -> dict[str, Any]:
     """
@@ -737,6 +807,7 @@ def pull_amocrm_core(
         cleanup_trial: удалить только Code9 trial rows ``ext-*`` перед
             реальной выгрузкой, чтобы mock-данные не смешались с amoCRM.
         deals_limit / contacts_limit: верхние отсечки (для trial/audit).
+        auto_sync: True для scheduler-driven incremental sync.
         job_row_id: UUID public.jobs, проставляется enqueue-логикой.
 
     После успешного pull'а enqueue-ит ``run_audit_report`` через RQ.
@@ -766,6 +837,7 @@ def pull_amocrm_core(
                     "pipelines": export_result.get("pipelines_created", 0),
                     "stages": export_result.get("stages_created", 0),
                     "users": export_result.get("crm_users_created", 0),
+                    "companies": export_result.get("companies_created", 0),
                     "contacts": export_result.get("contacts_created", 0),
                     "deals": export_result.get("deals_created", 0),
                 },
@@ -829,9 +901,43 @@ def pull_amocrm_core(
                     extra={"connection_id": connection_id, "since_iso": since_iso},
                 )
                 since = None
-        created_from = _parse_export_date_start(date_from_iso)
-        created_to = _parse_export_date_end(date_to_iso)
-        selected_pipeline_ids = [str(pid) for pid in (pipeline_ids or []) if str(pid).strip()]
+        conn_metadata = conn_info.get("metadata") if isinstance(conn_info.get("metadata"), dict) else {}
+        previous_active_export = (
+            conn_metadata.get("active_export")
+            if isinstance(conn_metadata.get("active_export"), dict)
+            else {}
+        )
+        preserve_active_export = (
+            since_iso is not None
+            and date_from_iso is None
+            and date_to_iso is None
+            and pipeline_ids is None
+        )
+        effective_date_from_iso = (
+            previous_active_export.get("date_from")
+            if preserve_active_export
+            else date_from_iso
+        )
+        effective_date_to_iso = (
+            previous_active_export.get("date_to")
+            if preserve_active_export
+            else date_to_iso
+        )
+        effective_pipeline_ids = (
+            previous_active_export.get("pipeline_ids")
+            if preserve_active_export
+            else pipeline_ids
+        )
+        if preserve_active_export and effective_date_from_iso == "2000-01-01":
+            # The UI's "all time" preset should keep growing after the first
+            # full export, otherwise new deals created after the original
+            # export date would never enter the active analytics slice.
+            effective_date_to_iso = datetime.now(tz=timezone.utc).date().isoformat()
+        created_from = _parse_export_date_start(effective_date_from_iso)
+        created_to = _parse_export_date_end(effective_date_to_iso)
+        selected_pipeline_ids = [
+            str(pid) for pid in (effective_pipeline_ids or []) if str(pid).strip()
+        ]
 
         q_schema = f'"{schema}"'
         counts: dict[str, int] = {}
@@ -858,6 +964,13 @@ def pull_amocrm_core(
                 f"[pull_amocrm_core] schema={schema} pipelines={counts['pipelines']}",
                 flush=True,
             )
+            update_job_progress(
+                job_row_id,
+                stage="pipelines",
+                completed_steps=1,
+                total_steps=6,
+                counts=counts,
+            )
 
             stage_map = _pull_stages(
                 sess, connector, access_token, pipeline_map, schema=schema
@@ -867,6 +980,13 @@ def pull_amocrm_core(
                 f"[pull_amocrm_core] schema={schema} stages={counts['stages']}",
                 flush=True,
             )
+            update_job_progress(
+                job_row_id,
+                stage="stages",
+                completed_steps=2,
+                total_steps=6,
+                counts=counts,
+            )
 
             user_map = _pull_users(sess, connector, access_token, schema=schema)
             counts["users"] = len(user_map)
@@ -874,14 +994,57 @@ def pull_amocrm_core(
                 f"[pull_amocrm_core] schema={schema} users={counts['users']}",
                 flush=True,
             )
+            update_job_progress(
+                job_row_id,
+                stage="users",
+                completed_steps=3,
+                total_steps=6,
+                counts=counts,
+            )
+
+            _pull_companies(
+                sess,
+                connector,
+                access_token,
+                user_map,
+                since,
+                schema=schema,
+            )
+            company_map = _load_external_id_map(sess, schema=schema, table="companies")
+            counts["companies"] = len(company_map)
+            print(
+                f"[pull_amocrm_core] schema={schema} companies={counts['companies']}",
+                flush=True,
+            )
+            update_job_progress(
+                job_row_id,
+                stage="companies",
+                completed_steps=4,
+                total_steps=6,
+                counts=counts,
+            )
 
             contact_map = _pull_contacts(
-                sess, connector, access_token, user_map, contacts_limit, schema=schema
+                sess,
+                connector,
+                access_token,
+                user_map,
+                since,
+                contacts_limit,
+                schema=schema,
             )
+            contact_map = _load_external_id_map(sess, schema=schema, table="contacts")
             counts["contacts"] = len(contact_map)
             print(
                 f"[pull_amocrm_core] schema={schema} contacts={counts['contacts']}",
                 flush=True,
+            )
+            update_job_progress(
+                job_row_id,
+                stage="contacts",
+                completed_steps=5,
+                total_steps=6,
+                counts=counts,
             )
 
             deals_processed = _pull_deals(
@@ -891,6 +1054,7 @@ def pull_amocrm_core(
                 pipeline_map=pipeline_map,
                 stage_map=stage_map,
                 user_map=user_map,
+                company_map=company_map,
                 contact_map=contact_map,
                 since=since,
                 created_from=created_from,
@@ -902,6 +1066,13 @@ def pull_amocrm_core(
             print(
                 f"[pull_amocrm_core] schema={schema} deals_processed={deals_processed}",
                 flush=True,
+            )
+            update_job_progress(
+                job_row_id,
+                stage="deals",
+                completed_steps=6,
+                total_steps=6,
+                counts={**counts, "deals_processed": deals_processed},
             )
 
             counts = _tenant_active_export_counts(
@@ -924,6 +1095,19 @@ def pull_amocrm_core(
         # здесь используем реальное имя колонки — ``metadata``, а НЕ
         # ``metadata_json``. Регрессия покрыта в
         # ``tests/api/test_crm_pull_metadata_sql_column.py``.
+        metadata_patch = {
+            "last_pull_counts": counts,
+            "last_pull_at": datetime.now(tz=timezone.utc).isoformat(),
+            "active_export": _build_active_export_metadata(
+                date_from_iso=effective_date_from_iso,
+                date_to_iso=effective_date_to_iso,
+                pipeline_ids=selected_pipeline_ids,
+                counts=counts,
+            ),
+        }
+        if auto_sync:
+            metadata_patch["last_auto_sync_at"] = datetime.now(tz=timezone.utc).isoformat()
+
         with sync_session() as sess:
             sess.execute(
                 text(
@@ -936,19 +1120,7 @@ def pull_amocrm_core(
                 ),
                 {
                     "cid": connection_id,
-                    "patch": json.dumps(
-                        {
-                            "last_pull_counts": counts,
-                            "last_pull_at": datetime.now(tz=timezone.utc).isoformat(),
-                            "active_export": _build_active_export_metadata(
-                                date_from_iso=date_from_iso,
-                                date_to_iso=date_to_iso,
-                                pipeline_ids=selected_pipeline_ids,
-                                counts=counts,
-                            ),
-                        },
-                        ensure_ascii=False,
-                    ),
+                    "patch": json.dumps(metadata_patch, ensure_ascii=False),
                 },
             )
 
@@ -967,16 +1139,39 @@ def pull_amocrm_core(
             "connection_id": connection_id,
             "mock": False,
             "first_pull": first_pull,
+            "auto_sync": auto_sync,
             "tenant_schema": schema,
             "counts": counts,
             "audit_job_enqueued": audit_enqueued,
         }
         charge_token_reservation_for_job(job_row_id, result)
+        create_job_notification(
+            job_row_id,
+            kind="sync_complete",
+            title=(
+                "Автосинхронизация amoCRM завершена"
+                if auto_sync
+                else "Выгрузка amoCRM завершена"
+            ),
+            body=(
+                f"Сделок: {counts.get('deals', 0)}, "
+                f"контактов: {counts.get('contacts', 0)}, "
+                f"компаний: {counts.get('companies', 0)}."
+            ),
+            metadata={"counts": counts, "auto_sync": auto_sync},
+        )
         mark_job_succeeded(job_row_id, result)
         return result
     except Exception as exc:
         release_token_reservation_for_job(job_row_id, f"pull_amocrm_core: {exc}")
         mark_job_failed(job_row_id, f"pull_amocrm_core: {exc}")
+        create_job_notification(
+            job_row_id,
+            kind="sync_failed",
+            title="Синхронизация amoCRM не завершилась",
+            body="Задача остановлена с ошибкой. Детали доступны в карточке подключения.",
+            metadata={"auto_sync": auto_sync},
+        )
         raise
 
 
