@@ -270,7 +270,15 @@
         "selectAllPipelines": "Select all",
         "last12Months": "Last 12 months",
         "currentYear": "Current year",
-        "custom": "Custom"
+        "custom": "Custom",
+        "tokenEstimateTitle": "Full database AI token estimate",
+        "tokenEstimateSource": "Source",
+        "full_database_snapshot": "full volume snapshot",
+        "active_export_lower_bound": "lower bound from current export",
+        "tokensWithoutCalls": "Without calls",
+        "callHours": "Call hours",
+        "tokensWithCalls": "Including calls",
+        "callEstimateHint": "Calls are scenario-based: {low}–{high} tokens per minute for transcription and analysis. No new transcription starts here."
       },
       "new": {
         "title": "New connection",

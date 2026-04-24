@@ -270,7 +270,15 @@
         "selectAllPipelines": "Выбрать все",
         "last12Months": "Последние 12 месяцев",
         "currentYear": "Текущий год",
-        "custom": "Период"
+        "custom": "Период",
+        "tokenEstimateTitle": "Оценка AI-токенов всей базы",
+        "tokenEstimateSource": "Источник",
+        "full_database_snapshot": "снимок полного объёма",
+        "active_export_lower_bound": "нижняя оценка по текущей выгрузке",
+        "tokensWithoutCalls": "Без звонков",
+        "callHours": "Часы звонков",
+        "tokensWithCalls": "С учётом звонков",
+        "callEstimateHint": "Звонки считаются сценарно: {low}–{high} токенов на минуту транскрибации и анализа. Новая транскрибация здесь не запускается."
       },
       "new": {
         "title": "Новое подключение",

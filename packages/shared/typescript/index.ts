@@ -85,6 +85,26 @@ export interface CrmConnectionMetadata {
     };
     completed_at?: string | null;
   };
+  token_estimate_snapshot?: {
+    source?: string;
+    captured_at?: string | null;
+    counts?: {
+      deals?: number;
+      contacts?: number;
+      companies?: number;
+      lead_notes?: number;
+      events?: number;
+    };
+    avg_tokens?: {
+      deals?: number;
+      contacts?: number;
+      companies?: number;
+      lead_notes?: number;
+      events?: number;
+    };
+    confidence?: Record<string, string>;
+    notes?: string[];
+  };
   // #44.6 external_button:
   amocrm_auth_mode?: 'static_client' | 'external_button';
   amocrm_external_integration?: {
@@ -200,6 +220,36 @@ export interface AuditReport {
   crm_connection_id: string;
   created_at: string;
   summary: AuditResultSummary;
+}
+
+export interface TokenEstimateItem {
+  key: 'deals' | 'contacts' | 'companies' | 'lead_notes' | 'events' | string;
+  label: string;
+  count: number;
+  avg_tokens: number;
+  estimated_tokens: number;
+  confidence: string;
+}
+
+export interface TokenEstimateResponse {
+  connection_id: string;
+  source: string;
+  basis: 'full_database_snapshot' | 'active_export_lower_bound' | string;
+  captured_at?: string | null;
+  encoding: string;
+  items: TokenEstimateItem[];
+  total_tokens_without_calls: number;
+  calls: {
+    minutes: number;
+    tokens_per_minute_low: number;
+    tokens_per_minute_high: number;
+    estimated_tokens_low: number;
+    estimated_tokens_high: number;
+    confidence: string;
+  };
+  total_tokens_low: number;
+  total_tokens_high: number;
+  notes: string[];
 }
 
 export interface DashboardOverview {

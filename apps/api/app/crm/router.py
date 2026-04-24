@@ -59,6 +59,22 @@ ws_crm_router = APIRouter(tags=["crm"])
 
 settings = get_settings()
 _TENANT_SCHEMA_RE = re.compile(r"^crm_amo_[0-9a-f]{8}$")
+_TOKEN_ESTIMATE_DEFAULT_AVG = {
+    "deals": 1875,
+    "contacts": 274,
+    "companies": 402,
+    "lead_notes": 159,
+    "events": 182,
+}
+_TOKEN_ESTIMATE_LABELS = {
+    "deals": "Сделки",
+    "contacts": "Контакты",
+    "companies": "Компании",
+    "lead_notes": "Письма и notes",
+    "events": "Events",
+}
+_CALL_TOKENS_PER_MINUTE_LOW = 350
+_CALL_TOKENS_PER_MINUTE_HIGH = 570
 
 
 def _now() -> datetime:
@@ -89,6 +105,99 @@ def _serialize_conn(c: CrmConnection) -> dict[str, Any]:
             if c.amocrm_credentials_received_at
             else None
         ),
+    }
+
+
+def _safe_int(value: Any, default: int = 0) -> int:
+    try:
+        if value is None:
+            return default
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        return default
+
+
+def _build_token_estimate(
+    *,
+    connection_id: str,
+    metadata: dict[str, Any],
+    call_minutes: int | None = None,
+) -> dict[str, Any]:
+    snapshot = metadata.get("token_estimate_snapshot")
+    counts_source: dict[str, Any] = {}
+    avg_source: dict[str, Any] = {}
+    confidence: dict[str, str] = {}
+    basis = "active_export_lower_bound"
+    source = "active_export_counts"
+    captured_at = None
+    notes: list[str] = []
+
+    if isinstance(snapshot, dict) and isinstance(snapshot.get("counts"), dict):
+        counts_source = snapshot.get("counts") or {}
+        avg_source = snapshot.get("avg_tokens") or {}
+        confidence = snapshot.get("confidence") or {}
+        basis = "full_database_snapshot"
+        source = str(snapshot.get("source") or "metadata_snapshot")
+        captured_at = snapshot.get("captured_at")
+        if isinstance(snapshot.get("notes"), list):
+            notes = [str(item) for item in snapshot["notes"]]
+    else:
+        active = metadata.get("active_export")
+        if isinstance(active, dict) and isinstance(active.get("counts"), dict):
+            counts_source = active.get("counts") or {}
+            captured_at = active.get("completed_at")
+        elif isinstance(metadata.get("last_pull_counts"), dict):
+            counts_source = metadata.get("last_pull_counts") or {}
+        elif isinstance(metadata.get("last_trial_export_counts"), dict):
+            counts_source = metadata.get("last_trial_export_counts") or {}
+            source = "trial_export_counts"
+        notes.append(
+            "Full amoCRM census is not stored yet; estimate is a lower bound from cached export counts."
+        )
+
+    items: list[dict[str, Any]] = []
+    total_without_calls = 0
+    for key in ("deals", "contacts", "companies", "lead_notes", "events"):
+        count = _safe_int(counts_source.get(key))
+        avg_tokens = _safe_int(
+            avg_source.get(key),
+            _TOKEN_ESTIMATE_DEFAULT_AVG[key],
+        )
+        estimated_tokens = count * avg_tokens
+        total_without_calls += estimated_tokens
+        items.append(
+            {
+                "key": key,
+                "label": _TOKEN_ESTIMATE_LABELS[key],
+                "count": count,
+                "avg_tokens": avg_tokens,
+                "estimated_tokens": estimated_tokens,
+                "confidence": confidence.get(key, "estimate"),
+            }
+        )
+
+    normalized_call_minutes = _safe_int(call_minutes)
+    calls_low = normalized_call_minutes * _CALL_TOKENS_PER_MINUTE_LOW
+    calls_high = normalized_call_minutes * _CALL_TOKENS_PER_MINUTE_HIGH
+    return {
+        "connection_id": connection_id,
+        "source": source,
+        "basis": basis,
+        "captured_at": captured_at,
+        "encoding": "o200k_base",
+        "items": items,
+        "total_tokens_without_calls": total_without_calls,
+        "calls": {
+            "minutes": normalized_call_minutes,
+            "tokens_per_minute_low": _CALL_TOKENS_PER_MINUTE_LOW,
+            "tokens_per_minute_high": _CALL_TOKENS_PER_MINUTE_HIGH,
+            "estimated_tokens_low": calls_low,
+            "estimated_tokens_high": calls_high,
+            "confidence": "scenario",
+        },
+        "total_tokens_low": total_without_calls + calls_low,
+        "total_tokens_high": total_without_calls + calls_high,
+        "notes": notes,
     }
 
 
@@ -611,6 +720,21 @@ async def export_options(
         "source": "tenant_cache",
         "empty_reason": None if pipelines else "no_real_pipelines_cached",
     }
+
+
+@router.get("/connections/{connection_id}/token-estimate")
+async def token_estimate(
+    connection_id: uuid.UUID,
+    call_minutes: int | None = None,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    conn, _ = await _get_conn_for_user(session, user, connection_id)
+    return _build_token_estimate(
+        connection_id=str(conn.id),
+        metadata=conn.metadata_json or {},
+        call_minutes=call_minutes,
+    )
 
 
 # -------------------- Export estimate + full export --------------------

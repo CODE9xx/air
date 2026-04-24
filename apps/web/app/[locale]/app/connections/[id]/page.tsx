@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { useLocale, useTranslations } from 'next-intl';
 import { api } from '@/lib/api';
-import type { CrmConnection } from '@/lib/types';
+import type { CrmConnection, TokenEstimateResponse } from '@/lib/types';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Skeleton } from '@/components/ui/Skeleton';
@@ -84,6 +84,9 @@ export default function ConnectionDetailPage() {
   const [exportJobId, setExportJobId] = useState<string | null>(null);
   const [exportJobStatus, setExportJobStatus] = useState<string | null>(null);
   const [exportRunning, setExportRunning] = useState(false);
+  const [tokenEstimate, setTokenEstimate] = useState<TokenEstimateResponse | null>(null);
+  const [tokenEstimateLoading, setTokenEstimateLoading] = useState(false);
+  const [callHours, setCallHours] = useState('0');
   const flashShown = useRef(false);
 
   const reloadConnection = async () => {
@@ -104,6 +107,23 @@ export default function ConnectionDetailPage() {
       }
     })();
   }, [id, toast, tCommon]);
+
+  useEffect(() => {
+    if (!conn) return;
+    (async () => {
+      setTokenEstimateLoading(true);
+      try {
+        const estimate = await api.get<TokenEstimateResponse>(
+          `/crm/connections/${conn.id}/token-estimate`,
+        );
+        setTokenEstimate(estimate);
+      } catch {
+        setTokenEstimate(null);
+      } finally {
+        setTokenEstimateLoading(false);
+      }
+    })();
+  }, [conn?.id]);
 
   // Показываем toast по OAuth-флагу и чистим query-string.
   useEffect(() => {
@@ -250,6 +270,22 @@ export default function ConnectionDetailPage() {
     : t('detail.lastTrialExportAt');
   const isMock = Boolean(conn.metadata?.mock);
   const activeExport = conn.metadata?.active_export;
+  const normalizedCallHours = Number.parseFloat(callHours.replace(',', '.'));
+  const callMinutes = Number.isFinite(normalizedCallHours)
+    ? Math.max(0, Math.round(normalizedCallHours * 60))
+    : 0;
+  const callTokensLow = tokenEstimate
+    ? callMinutes * tokenEstimate.calls.tokens_per_minute_low
+    : 0;
+  const callTokensHigh = tokenEstimate
+    ? callMinutes * tokenEstimate.calls.tokens_per_minute_high
+    : 0;
+  const totalWithCallsLow = tokenEstimate
+    ? tokenEstimate.total_tokens_without_calls + callTokensLow
+    : 0;
+  const totalWithCallsHigh = tokenEstimate
+    ? tokenEstimate.total_tokens_without_calls + callTokensHigh
+    : 0;
 
   return (
     <div className="space-y-6">
@@ -335,6 +371,78 @@ export default function ConnectionDetailPage() {
           </div>
         </section>
       )}
+
+      <section className="card p-5 text-sm space-y-4">
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <div>
+            <h2 className="text-lg font-semibold">{t('detail.tokenEstimateTitle')}</h2>
+            {tokenEstimate && (
+              <div className="mt-1 text-xs text-muted-foreground">
+                {t('detail.tokenEstimateSource')}:{' '}
+                {tokenEstimate.basis === 'full_database_snapshot'
+                  ? t('detail.full_database_snapshot')
+                  : t('detail.active_export_lower_bound')}
+              </div>
+            )}
+          </div>
+          {tokenEstimate?.captured_at && (
+            <Badge tone="info">{formatDate(tokenEstimate.captured_at, locale)}</Badge>
+          )}
+        </div>
+
+        {tokenEstimateLoading && <Skeleton className="h-24" />}
+
+        {tokenEstimate && (
+          <>
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+              {tokenEstimate.items.map((item) => (
+                <div key={item.key} className="rounded-md border border-border p-3">
+                  <div className="text-xs text-muted-foreground">{item.label}</div>
+                  <div className="mt-1 font-semibold tabular-nums">
+                    {item.count.toLocaleString()}
+                  </div>
+                  <div className="mt-1 text-xs text-muted-foreground">
+                    {formatCompactTokens(item.estimated_tokens)}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="grid md:grid-cols-3 gap-3">
+              <CountField
+                label={t('detail.tokensWithoutCalls')}
+                value={tokenEstimate.total_tokens_without_calls}
+              />
+              <label className="block">
+                <span className="text-xs text-muted-foreground">{t('detail.callHours')}</span>
+                <input
+                  className="mt-1 w-full rounded-md border border-border bg-white px-3 py-2"
+                  min="0"
+                  step="0.5"
+                  type="number"
+                  value={callHours}
+                  onChange={(event) => setCallHours(event.target.value)}
+                />
+              </label>
+              <div>
+                <div className="text-xs text-muted-foreground">
+                  {t('detail.tokensWithCalls')}
+                </div>
+                <div className="mt-1 font-semibold text-lg tabular-nums">
+                  {formatCompactTokens(totalWithCallsLow)} – {formatCompactTokens(totalWithCallsHigh)}
+                </div>
+              </div>
+            </div>
+
+            <div className="rounded-md border border-border bg-muted p-3 text-xs text-muted-foreground">
+              {t('detail.callEstimateHint', {
+                low: tokenEstimate.calls.tokens_per_minute_low,
+                high: tokenEstimate.calls.tokens_per_minute_high,
+              })}
+            </div>
+          </>
+        )}
+      </section>
 
       {showExportSetup && (
         <section className="card p-5 text-sm space-y-4">
@@ -476,4 +584,11 @@ function CountField({ label, value }: { label: string; value: number | undefined
       </div>
     </div>
   );
+}
+
+function formatCompactTokens(value: number): string {
+  if (value >= 1_000_000_000) return `${(value / 1_000_000_000).toFixed(2)}B`;
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
+  if (value >= 1_000) return `${(value / 1_000).toFixed(1)}K`;
+  return value.toLocaleString();
 }
