@@ -61,6 +61,16 @@ def test_export_token_quote_scales_snapshot_by_cached_deal_count():
     assert quote["can_start"] is True
 
 
+def test_full_export_payload_does_not_limit_contacts():
+    from pathlib import Path
+
+    src = (
+        Path(__file__).resolve().parents[2] / "apps/api/app/crm/router.py"
+    ).read_text(encoding="utf-8")
+
+    assert '"contacts_limit": 2000' not in src
+
+
 def test_full_export_quote_route_exists():
     from app.crm.router import router as crm_router
 

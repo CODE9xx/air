@@ -125,7 +125,7 @@ def enqueue(
             worker_kwargs["job_row_id"] = job_row_id
         enqueue_kwargs: dict[str, Any] = {"job_id": str(uuid.uuid4())}
         if kind in JOB_KIND_TIMEOUT_SECONDS:
-            enqueue_kwargs["job_timeout"] = JOB_KIND_TIMEOUT_SECONDS[kind]
+            enqueue_kwargs["timeout"] = JOB_KIND_TIMEOUT_SECONDS[kind]
         if depends_on:
             enqueue_kwargs["depends_on"] = depends_on
         job = queue.enqueue_call(

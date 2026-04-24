@@ -932,7 +932,6 @@ async def full_export(
         "date_to_iso": body.date_to.isoformat(),
         "pipeline_ids": [str(pid) for pid in body.pipeline_ids],
         "cleanup_trial": True,
-        "contacts_limit": 2000,
     }
     job = Job(
         workspace_id=ws.id,

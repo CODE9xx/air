@@ -102,7 +102,7 @@ def test_enqueue_sets_long_timeout_for_pull_amocrm_core(fake_queue):
     """Full-period amoCRM pulls exceed RQ's default 180 second timeout."""
     enqueue("pull_amocrm_core", {"connection_id": "x"})
     call = fake_queue.enqueue_call.call_args
-    assert call.kwargs["job_timeout"] >= 3600
+    assert call.kwargs["timeout"] >= 3600
 
 
 def test_enqueue_rejects_unknown_kind():
