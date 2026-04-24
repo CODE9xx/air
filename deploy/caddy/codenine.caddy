@@ -1,0 +1,95 @@
+codenine.ru {
+    encode zstd gzip
+
+    @legacyLocales path /de /it
+    redir @legacyLocales /en permanent
+
+    @legacyLocalePages path_regexp legacy_locale_pages ^/(.+)-(?:de|it)$
+    redir @legacyLocalePages /{re.legacy_locale_pages.1}-en permanent
+
+    @calcLead path /api/calc-lead
+    handle @calcLead {
+        reverse_proxy codenine-form-proxy:8080 {
+            header_up X-Real-IP {remote_host}
+            header_up X-Forwarded-For {remote_host}
+            header_up X-Forwarded-Proto https
+        }
+    }
+
+    @localeApi path /api/locale
+    handle @localeApi {
+        reverse_proxy codenine-form-proxy:8080 {
+            header_up X-Real-IP {remote_host}
+            header_up X-Forwarded-For {remote_host}
+            header_up X-Forwarded-Proto https
+        }
+    }
+
+    @demoSlots path /api/demo/slots
+    handle @demoSlots {
+        reverse_proxy codenine-form-proxy:8080 {
+            header_up X-Real-IP {remote_host}
+            header_up X-Forwarded-For {remote_host}
+            header_up X-Forwarded-Proto https
+        }
+    }
+
+    @demoBook path /api/demo/book
+    handle @demoBook {
+        reverse_proxy codenine-form-proxy:8080 {
+            header_up X-Real-IP {remote_host}
+            header_up X-Forwarded-For {remote_host}
+            header_up X-Forwarded-Proto https
+        }
+    }
+
+    root * /data/codenine
+
+    @root path /
+    rewrite @root /index.html
+
+    @html path_regexp html ^(.+)\.html$
+    redir @html {re.html.1} permanent
+
+    try_files {path} {path}.html
+    file_server
+
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        X-Frame-Options "DENY"
+        X-Content-Type-Options "nosniff"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        Permissions-Policy "camera=(), microphone=(), geolocation=(), interest-cohort=()"
+        Cross-Origin-Opener-Policy "same-origin"
+        Cross-Origin-Resource-Policy "same-site"
+        X-Permitted-Cross-Domain-Policies "none"
+        Content-Security-Policy "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline' https://gso.amocrm.ru https://fonts.googleapis.com; script-src 'self' 'unsafe-inline' https://mc.yandex.ru https://gso.amocrm.ru; connect-src 'self' https://mc.yandex.ru wss://mc.yandex.ru https://ai-chat-codenine.kyzxme.workers.dev https://gso.amocrm.ru https://*.amocrm.ru; frame-src https://analytics.aicode9.ru https://datalens.yandex https://www.youtube-nocookie.com https://www.youtube.com https://gso.amocrm.ru https://*.amocrm.ru; font-src 'self' data: https://fonts.gstatic.com;"
+        -Server
+    }
+
+    log {
+        output file /data/access-codenine.log {
+            roll_size 50mb
+            roll_keep 10
+            roll_keep_for 720h
+        }
+        format json
+    }
+}
+
+www.codenine.ru {
+    redir https://codenine.ru{uri} permanent
+}
+
+# book.codenine.ru is intentionally not served until DNS exists.
+# On 2026-04-24 it resolves as NXDOMAIN, and keeping it enabled makes Caddy
+# retry ACME issuance forever. Re-enable only after adding A/AAAA records.
+#
+# book.codenine.ru {
+#     encode zstd gzip
+#     root * /data/codenine/book-site
+#     @root path /
+#     rewrite @root /index.html
+#     try_files {path} {path}.html
+#     file_server
+# }

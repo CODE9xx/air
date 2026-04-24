@@ -1,0 +1,114 @@
+aicode9.ru {
+    encode zstd gzip
+
+    reverse_proxy web:3000 {
+        header_up X-Real-IP {remote_host}
+        header_up X-Forwarded-Proto https
+    }
+
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        X-Frame-Options "DENY"
+        X-Content-Type-Options "nosniff"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        Permissions-Policy "camera=(), microphone=(), geolocation=(), interest-cohort=()"
+        Content-Security-Policy "default-src 'self'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://www.amocrm.ru; connect-src 'self' https://api.aicode9.ru https://www.amocrm.ru https://*.amocrm.ru; frame-src https://www.amocrm.ru https://*.amocrm.ru; font-src 'self' data:; frame-ancestors 'none';"
+        -Server
+    }
+
+    log {
+        output file /data/access-app.log {
+            roll_size 50mb
+            roll_keep 10
+            roll_keep_for 720h
+        }
+        format json
+    }
+}
+
+api.aicode9.ru {
+    encode zstd gzip
+
+    reverse_proxy api:8000 {
+        header_up X-Real-IP {remote_host}
+        header_up X-Forwarded-Proto https
+    }
+
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        X-Frame-Options "DENY"
+        X-Content-Type-Options "nosniff"
+        Referrer-Policy "no-referrer"
+        Content-Security-Policy "default-src 'none'; frame-ancestors 'none';"
+        -Server
+    }
+
+    @health path /api/v1/health
+    handle @health {
+        reverse_proxy api:8000
+    }
+
+    log {
+        output file /data/access-api.log {
+            roll_size 50mb
+            roll_keep 10
+            roll_keep_for 720h
+        }
+        format json
+    }
+}
+
+demo.aicode9.ru {
+    encode zstd gzip
+
+    @demoNextRoutes path /client-login /ru/client-login /en/client-login /login /ru/login /en/login /register /ru/register /en/register /verify-email /ru/verify-email /en/verify-email /forgot-password /ru/forgot-password /en/forgot-password /reset-password /ru/reset-password /en/reset-password /app* /ru/app* /en/app* /admin* /ru/admin* /en/admin*
+    handle @demoNextRoutes {
+        reverse_proxy web:3000 {
+            header_up X-Real-IP {remote_host}
+            header_up X-Forwarded-Proto https
+        }
+    }
+
+    @demoNextAssets path /_next/* /favicon.ico /robots.txt /sitemap.xml /amocrm-logo.png
+    handle @demoNextAssets {
+        reverse_proxy web:3000 {
+            header_up X-Real-IP {remote_host}
+            header_up X-Forwarded-Proto https
+        }
+    }
+
+    handle {
+        root * /data/demo.aicode9.ru
+
+        @root path /
+        rewrite @root /demo-2.html
+
+        @html path_regexp html ^(.+)\.html$
+        redir @html {re.html.1} permanent
+
+        try_files {path} {path}.html
+        file_server
+    }
+
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        X-Frame-Options "DENY"
+        X-Content-Type-Options "nosniff"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        Permissions-Policy "camera=(), microphone=(), geolocation=(), interest-cohort=()"
+        Cross-Origin-Opener-Policy "same-origin"
+        Cross-Origin-Resource-Policy "same-site"
+        X-Permitted-Cross-Domain-Policies "none"
+        Content-Security-Policy "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline' https://gso.amocrm.ru https://fonts.googleapis.com; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://www.amocrm.ru https://gso.amocrm.ru; connect-src 'self' https://api.aicode9.ru https://www.amocrm.ru https://*.amocrm.ru https://gso.amocrm.ru; frame-src https://analytics.aicode9.ru https://www.amocrm.ru https://*.amocrm.ru https://gso.amocrm.ru; font-src 'self' data: https://fonts.gstatic.com;"
+        -Server
+    }
+
+    log {
+        output file /data/access-demo.log {
+            roll_size 20mb
+            roll_keep 6
+            roll_keep_for 720h
+        }
+        format json
+    }
+}

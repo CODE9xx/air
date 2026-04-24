@@ -36,6 +36,7 @@ services:
       - "443:443/udp"    # HTTP/3
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./caddy:/etc/caddy/sites-enabled:ro
       - caddy-data:/data
       - caddy-config:/config
     depends_on:
@@ -48,7 +49,7 @@ services:
     networks:
       - code9-prod-tw
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:2019/config/"]
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:2019/config/"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -196,6 +197,7 @@ services:
       - "8080"
     volumes:
       - ./codenine_form_proxy.py:/app/codenine_form_proxy.py:ro
+      - ./vendor:/app/vendor:ro
     command: ["python", "/app/codenine_form_proxy.py"]
     networks:
       - code9-prod-tw
