@@ -19,7 +19,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import { CircleDollarSign, GitBranch, Percent, TrendingUp, Users } from 'lucide-react';
+import { AlertTriangle, CircleDollarSign, Clock3, GitBranch, Percent, TrendingUp, Users } from 'lucide-react';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { api } from '@/lib/api';
@@ -82,6 +82,40 @@ type SalesDashboard = {
     manager: string | null;
     created_at: string | null;
     closed_at: string | null;
+  }>;
+  sales_cycle: {
+    avg_won_cycle_days: number;
+    avg_lost_cycle_days: number;
+    avg_open_age_days: number;
+    stale_open_deals: number;
+    stale_open_amount_rub: number;
+  };
+  open_age_buckets: Array<{
+    bucket: string;
+    label: string;
+    deals: number;
+    amount_rub: number;
+  }>;
+  pipeline_health: Array<{
+    pipeline: string;
+    deals: number;
+    open_deals: number;
+    won_deals: number;
+    lost_deals: number;
+    stale_open_deals: number;
+    open_amount_rub: number;
+    avg_open_age_days: number;
+    oldest_open_age_days: number;
+    won_rate: number;
+  }>;
+  manager_risk: Array<{
+    user_id: string;
+    name: string;
+    open_deals: number;
+    stale_open_deals: number;
+    open_amount_rub: number;
+    avg_open_age_days: number;
+    oldest_open_age_days: number;
   }>;
 };
 
@@ -160,6 +194,22 @@ export default function ConnectionDashboardPage() {
         label: shortLabel(item.name, 24),
       })),
     [data?.manager_leaderboard],
+  );
+  const openAgeBuckets = useMemo(
+    () => (data?.open_age_buckets ?? []).map((item) => ({ ...item, label: item.label })),
+    [data?.open_age_buckets],
+  );
+  const pipelineHealth = useMemo(
+    () =>
+      (data?.pipeline_health ?? []).slice(0, 8).map((item) => ({
+        ...item,
+        label: shortLabel(item.pipeline, 28),
+      })),
+    [data?.pipeline_health],
+  );
+  const managerRisk = useMemo(
+    () => (data?.manager_risk ?? []).slice(0, 8),
+    [data?.manager_risk],
   );
 
   if (loading) {
@@ -258,6 +308,78 @@ export default function ConnectionDashboardPage() {
           value={formatNumber(data.kpis.won_deals, locale)}
           tone="cyan"
         />
+      </section>
+
+      <section className="grid gap-4 xl:grid-cols-[minmax(0,0.72fr)_minmax(0,1.28fr)]">
+        <Panel title={t('riskTitle')} subtitle={t('riskHint')}>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <RiskStat
+              icon={<AlertTriangle className="h-4 w-4" />}
+              label={t('staleDeals')}
+              value={formatNumber(data.sales_cycle.stale_open_deals, locale)}
+              hint={t('staleDealsHint')}
+              tone="rose"
+            />
+            <RiskStat
+              icon={<CircleDollarSign className="h-4 w-4" />}
+              label={t('staleAmount')}
+              value={formatRub(data.sales_cycle.stale_open_amount_rub, locale)}
+              hint={t('staleAmountHint')}
+              tone="amber"
+            />
+            <RiskStat
+              icon={<Clock3 className="h-4 w-4" />}
+              label={t('avgOpenAge')}
+              value={formatDays(data.sales_cycle.avg_open_age_days, locale)}
+              hint={t('avgOpenAgeHint')}
+              tone="blue"
+            />
+            <RiskStat
+              icon={<TrendingUp className="h-4 w-4" />}
+              label={t('avgWonCycle')}
+              value={formatDays(data.sales_cycle.avg_won_cycle_days, locale)}
+              hint={t('avgWonCycleHint')}
+              tone="emerald"
+            />
+          </div>
+        </Panel>
+
+        <Panel title={t('openAgeTitle')} subtitle={t('openAgeHint')}>
+          <div className="h-[280px]">
+            <ResponsiveContainer width="100%" height="100%">
+              <ComposedChart data={openAgeBuckets} margin={{ top: 8, right: 18, left: 0, bottom: 8 }}>
+                <CartesianGrid stroke="#e2e8f0" strokeDasharray="3 3" vertical={false} />
+                <XAxis dataKey="label" tick={{ fontSize: 12 }} tickLine={false} axisLine={false} />
+                <YAxis yAxisId="left" tick={{ fontSize: 12 }} tickLine={false} axisLine={false} />
+                <YAxis
+                  yAxisId="right"
+                  orientation="right"
+                  tick={{ fontSize: 12 }}
+                  tickLine={false}
+                  axisLine={false}
+                  tickFormatter={(value) => shortMoney(Number(value), locale)}
+                />
+                <Tooltip
+                  formatter={(value, name) =>
+                    name === 'amount_rub'
+                      ? [formatRub(Number(value), locale), t('openAmount')]
+                      : [formatNumber(Number(value), locale), t('deals')]
+                  }
+                />
+                <Legend />
+                <Bar yAxisId="left" dataKey="deals" name={t('deals')} fill="#2563eb" radius={[4, 4, 0, 0]} />
+                <Line
+                  yAxisId="right"
+                  dataKey="amount_rub"
+                  name={t('openAmount')}
+                  stroke="#d97706"
+                  strokeWidth={2}
+                  dot={false}
+                />
+              </ComposedChart>
+            </ResponsiveContainer>
+          </div>
+        </Panel>
       </section>
 
       <section className="grid gap-4 xl:grid-cols-[minmax(0,1.35fr)_minmax(360px,0.65fr)]">
@@ -425,6 +547,88 @@ export default function ConnectionDashboardPage() {
         </Panel>
       </section>
 
+      <section className="grid gap-4 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)]">
+        <Panel title={t('pipelineHealthTitle')} subtitle={t('pipelineHealthHint')}>
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-left text-sm">
+              <thead className="border-b border-slate-200 text-xs uppercase text-slate-500">
+                <tr>
+                  <th className="py-3 pr-4 font-medium">{t('pipeline')}</th>
+                  <th className="py-3 pr-4 text-right font-medium">{t('openDeals')}</th>
+                  <th className="py-3 pr-4 text-right font-medium">{t('staleDeals')}</th>
+                  <th className="py-3 pr-4 text-right font-medium">{t('avgAge')}</th>
+                  <th className="py-3 text-right font-medium">{t('openAmount')}</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {pipelineHealth.map((pipeline) => (
+                  <tr key={pipeline.pipeline}>
+                    <td className="py-3 pr-4">
+                      <div className="font-medium text-slate-950">{pipeline.pipeline}</div>
+                      <div className="mt-1 h-2 rounded-full bg-slate-100">
+                        <div
+                          className="h-2 rounded-full bg-blue-600"
+                          style={{
+                            width: `${Math.min(
+                              100,
+                              Math.round((pipeline.open_deals / Math.max(1, data.kpis.open_deals)) * 100),
+                            )}%`,
+                          }}
+                        />
+                      </div>
+                    </td>
+                    <td className="py-3 pr-4 text-right text-slate-700">
+                      {formatNumber(pipeline.open_deals, locale)}
+                    </td>
+                    <td className="py-3 pr-4 text-right font-semibold text-rose-700">
+                      {formatNumber(pipeline.stale_open_deals, locale)}
+                    </td>
+                    <td className="py-3 pr-4 text-right text-slate-700">
+                      {formatDays(pipeline.avg_open_age_days, locale)}
+                    </td>
+                    <td className="py-3 text-right font-semibold text-slate-950">
+                      {formatRub(pipeline.open_amount_rub, locale)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Panel>
+
+        <Panel title={t('managerRiskTitle')} subtitle={t('managerRiskHint')}>
+          <div className="space-y-3">
+            {managerRisk.map((manager, index) => (
+              <div key={manager.user_id} className="rounded-md border border-slate-200 p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="truncate text-sm font-semibold text-slate-950">
+                      {index + 1}. {manager.name}
+                    </div>
+                    <div className="mt-1 text-xs text-slate-500">
+                      {formatNumber(manager.open_deals, locale)} {t('openDeals').toLowerCase()} ·{' '}
+                      {formatDays(manager.avg_open_age_days, locale)}
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-sm font-semibold text-rose-700">
+                      {formatNumber(manager.stale_open_deals, locale)}
+                    </div>
+                    <div className="text-xs text-slate-500">{t('staleDeals').toLowerCase()}</div>
+                  </div>
+                </div>
+                <div className="mt-3 flex items-center justify-between text-xs text-slate-500">
+                  <span>{t('openAmount')}</span>
+                  <span className="font-semibold text-slate-800">
+                    {formatRub(manager.open_amount_rub, locale)}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </Panel>
+      </section>
+
       <section className="grid gap-4 xl:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)]">
         <Panel title={t('managerLeaderboard')} subtitle={t('managerLeaderboardHint')}>
           <div className="space-y-3">
@@ -555,6 +759,37 @@ function KpiCard({
   );
 }
 
+function RiskStat({
+  icon,
+  label,
+  value,
+  hint,
+  tone,
+}: {
+  icon: ReactNode;
+  label: string;
+  value: string;
+  hint: string;
+  tone: 'rose' | 'amber' | 'blue' | 'emerald';
+}) {
+  const toneClass = {
+    rose: 'bg-rose-50 text-rose-700 border-rose-100',
+    amber: 'bg-amber-50 text-amber-700 border-amber-100',
+    blue: 'bg-blue-50 text-blue-700 border-blue-100',
+    emerald: 'bg-emerald-50 text-emerald-700 border-emerald-100',
+  }[tone];
+  return (
+    <div className="rounded-md border border-slate-200 bg-slate-50 p-3">
+      <div className={`inline-flex h-8 w-8 items-center justify-center rounded-md border ${toneClass}`}>
+        {icon}
+      </div>
+      <div className="mt-3 text-xs text-slate-500">{label}</div>
+      <div className="mt-1 text-xl font-semibold text-slate-950">{value}</div>
+      <div className="mt-1 text-xs leading-5 text-slate-500">{hint}</div>
+    </div>
+  );
+}
+
 function MiniStat({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2">
@@ -588,6 +823,12 @@ function formatPercent(value: number, locale: string) {
     style: 'percent',
     maximumFractionDigits: 1,
   }).format(value || 0);
+}
+
+function formatDays(value: number, locale: string) {
+  const rounded = Math.round(value || 0);
+  const suffix = locale.startsWith('en') ? 'd' : 'дн.';
+  return `${new Intl.NumberFormat(locale).format(rounded)} ${suffix}`;
 }
 
 function formatDate(value: string | null, locale: string) {

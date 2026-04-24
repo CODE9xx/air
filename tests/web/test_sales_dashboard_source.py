@@ -11,4 +11,8 @@ def test_connection_dashboard_uses_sales_dashboard_endpoint():
     assert "monthly_revenue" in page
     assert "pipeline_breakdown" in page
     assert "manager_leaderboard" in page
+    assert "open_age_buckets" in page
+    assert "pipeline_health" in page
+    assert "manager_risk" in page
     assert "salesTitle" in ru
+    assert "riskTitle" in ru

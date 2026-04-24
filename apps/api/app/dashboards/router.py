@@ -123,6 +123,12 @@ def _date_param(value: Any) -> date | str:
         return raw
 
 
+def _where_with_extra(where_sql: str, clause: str) -> str:
+    if where_sql:
+        return f"{where_sql} AND {clause}"
+    return f"WHERE {clause}"
+
+
 def _mock_sales_dashboard(connection_id: str) -> dict[str, Any]:
     overview = mock_dashboard_overview(connection_id)
     funnel = mock_dashboard_funnel(connection_id)
@@ -181,6 +187,44 @@ def _mock_sales_dashboard(connection_id: str) -> dict[str, Any]:
             for item in managers.get("managers", [])
         ],
         "top_deals": [],
+        "sales_cycle": {
+            "avg_won_cycle_days": 18,
+            "avg_lost_cycle_days": 27,
+            "avg_open_age_days": 34,
+            "stale_open_deals": 420,
+            "stale_open_amount_rub": 6_800_000,
+        },
+        "open_age_buckets": [
+            {"bucket": "0_7", "label": "0-7", "deals": 780, "amount_rub": 4_100_000},
+            {"bucket": "8_30", "label": "8-30", "deals": 1420, "amount_rub": 8_200_000},
+            {"bucket": "31_90", "label": "31-90", "deals": 930, "amount_rub": 5_700_000},
+            {"bucket": "90_plus", "label": "90+", "deals": 420, "amount_rub": 6_800_000},
+        ],
+        "pipeline_health": [
+            {
+                "pipeline": "Продажи",
+                "deals": 5200,
+                "open_deals": 3200,
+                "won_deals": 1400,
+                "lost_deals": 600,
+                "stale_open_deals": 260,
+                "open_amount_rub": 5_900_000,
+                "avg_open_age_days": 31,
+                "oldest_open_age_days": 240,
+                "won_rate": 0.2692,
+            }
+        ],
+        "manager_risk": [
+            {
+                "user_id": "mock-1",
+                "name": "Мария Иванова",
+                "open_deals": 620,
+                "stale_open_deals": 84,
+                "open_amount_rub": 2_100_000,
+                "avg_open_age_days": 29,
+                "oldest_open_age_days": 180,
+            }
+        ],
     }
 
 
@@ -606,6 +650,129 @@ async def dashboard_sales(
             )
         ).all()
 
+        open_where_sql = _where_with_extra(where_sql, "d.status='open'")
+        sales_cycle = (
+            await session.execute(
+                text(
+                    "SELECT "
+                    "  COALESCE(AVG(EXTRACT(EPOCH FROM (d.closed_at_external - d.created_at_external)) / 86400.0) "
+                    "    FILTER (WHERE d.status='won' AND d.closed_at_external IS NOT NULL "
+                    "            AND d.created_at_external IS NOT NULL), 0), "
+                    "  COALESCE(AVG(EXTRACT(EPOCH FROM (d.closed_at_external - d.created_at_external)) / 86400.0) "
+                    "    FILTER (WHERE d.status='lost' AND d.closed_at_external IS NOT NULL "
+                    "            AND d.created_at_external IS NOT NULL), 0), "
+                    "  COALESCE(AVG(EXTRACT(EPOCH FROM (NOW() - d.created_at_external)) / 86400.0) "
+                    "    FILTER (WHERE d.status='open' AND d.created_at_external IS NOT NULL), 0), "
+                    "  COUNT(d.id) FILTER (WHERE d.status='open' "
+                    "    AND COALESCE(d.updated_at_external, d.created_at_external) "
+                    "        < NOW() - make_interval(days => 30)), "
+                    "  COALESCE(SUM(d.price_cents) FILTER (WHERE d.status='open' "
+                    "    AND COALESCE(d.updated_at_external, d.created_at_external) "
+                    "        < NOW() - make_interval(days => 30)), 0) "
+                    "FROM deals d LEFT JOIN pipelines p ON p.id = d.pipeline_id "
+                    f"{where_sql}"
+                ),
+                params,
+            )
+        ).first()
+
+        age_bucket_rows = (
+            await session.execute(
+                text(
+                    "SELECT bucket, label, sort_order, COUNT(*) AS deals, COALESCE(SUM(price_cents), 0) "
+                    "FROM ("
+                    "  SELECT d.price_cents, "
+                    "    CASE "
+                    "      WHEN d.created_at_external IS NULL THEN 'unknown' "
+                    "      WHEN d.created_at_external >= NOW() - make_interval(days => 7) THEN '0_7' "
+                    "      WHEN d.created_at_external >= NOW() - make_interval(days => 30) THEN '8_30' "
+                    "      WHEN d.created_at_external >= NOW() - make_interval(days => 90) THEN '31_90' "
+                    "      WHEN d.created_at_external >= NOW() - make_interval(days => 180) THEN '91_180' "
+                    "      ELSE '180_plus' "
+                    "    END AS bucket, "
+                    "    CASE "
+                    "      WHEN d.created_at_external IS NULL THEN 'без даты' "
+                    "      WHEN d.created_at_external >= NOW() - make_interval(days => 7) THEN '0-7' "
+                    "      WHEN d.created_at_external >= NOW() - make_interval(days => 30) THEN '8-30' "
+                    "      WHEN d.created_at_external >= NOW() - make_interval(days => 90) THEN '31-90' "
+                    "      WHEN d.created_at_external >= NOW() - make_interval(days => 180) THEN '91-180' "
+                    "      ELSE '180+' "
+                    "    END AS label, "
+                    "    CASE "
+                    "      WHEN d.created_at_external IS NULL THEN 6 "
+                    "      WHEN d.created_at_external >= NOW() - make_interval(days => 7) THEN 1 "
+                    "      WHEN d.created_at_external >= NOW() - make_interval(days => 30) THEN 2 "
+                    "      WHEN d.created_at_external >= NOW() - make_interval(days => 90) THEN 3 "
+                    "      WHEN d.created_at_external >= NOW() - make_interval(days => 180) THEN 4 "
+                    "      ELSE 5 "
+                    "    END AS sort_order "
+                    "  FROM deals d LEFT JOIN pipelines p ON p.id = d.pipeline_id "
+                    f"  {open_where_sql}"
+                    ") bucketed "
+                    "GROUP BY bucket, label, sort_order ORDER BY sort_order"
+                ),
+                params,
+            )
+        ).all()
+
+        pipeline_health_rows = (
+            await session.execute(
+                text(
+                    "SELECT COALESCE(p.name, 'Без воронки'), "
+                    "       COUNT(d.id), "
+                    "       COUNT(d.id) FILTER (WHERE d.status='open'), "
+                    "       COUNT(d.id) FILTER (WHERE d.status='won'), "
+                    "       COUNT(d.id) FILTER (WHERE d.status='lost'), "
+                    "       COUNT(d.id) FILTER (WHERE d.status='open' "
+                    "         AND COALESCE(d.updated_at_external, d.created_at_external) "
+                    "             < NOW() - make_interval(days => 30)), "
+                    "       COALESCE(SUM(d.price_cents) FILTER (WHERE d.status='open'), 0), "
+                    "       COALESCE(AVG(EXTRACT(EPOCH FROM (NOW() - d.created_at_external)) / 86400.0) "
+                    "         FILTER (WHERE d.status='open' AND d.created_at_external IS NOT NULL), 0), "
+                    "       COALESCE(MAX(EXTRACT(EPOCH FROM (NOW() - d.created_at_external)) / 86400.0) "
+                    "         FILTER (WHERE d.status='open' AND d.created_at_external IS NOT NULL), 0) "
+                    "FROM deals d LEFT JOIN pipelines p ON p.id = d.pipeline_id "
+                    f"{where_sql} "
+                    "GROUP BY p.id, p.name "
+                    "ORDER BY COUNT(d.id) FILTER (WHERE d.status='open' "
+                    "  AND COALESCE(d.updated_at_external, d.created_at_external) "
+                    "      < NOW() - make_interval(days => 30)) DESC, "
+                    "COALESCE(SUM(d.price_cents) FILTER (WHERE d.status='open'), 0) DESC "
+                    "LIMIT 12"
+                ),
+                params,
+            )
+        ).all()
+
+        manager_risk_rows = (
+            await session.execute(
+                text(
+                    "SELECT u.id, COALESCE(u.full_name, 'Без менеджера'), "
+                    "       COUNT(d.id) FILTER (WHERE d.status='open'), "
+                    "       COUNT(d.id) FILTER (WHERE d.status='open' "
+                    "         AND COALESCE(d.updated_at_external, d.created_at_external) "
+                    "             < NOW() - make_interval(days => 30)), "
+                    "       COALESCE(SUM(d.price_cents) FILTER (WHERE d.status='open'), 0), "
+                    "       COALESCE(AVG(EXTRACT(EPOCH FROM (NOW() - d.created_at_external)) / 86400.0) "
+                    "         FILTER (WHERE d.status='open' AND d.created_at_external IS NOT NULL), 0), "
+                    "       COALESCE(MAX(EXTRACT(EPOCH FROM (NOW() - d.created_at_external)) / 86400.0) "
+                    "         FILTER (WHERE d.status='open' AND d.created_at_external IS NOT NULL), 0) "
+                    "FROM crm_users u "
+                    "LEFT JOIN deals d ON d.responsible_user_id = u.id "
+                    "LEFT JOIN pipelines p ON p.id = d.pipeline_id "
+                    f"{where_sql} "
+                    "GROUP BY u.id, u.full_name "
+                    "HAVING COUNT(d.id) FILTER (WHERE d.status='open') > 0 "
+                    "ORDER BY COUNT(d.id) FILTER (WHERE d.status='open' "
+                    "  AND COALESCE(d.updated_at_external, d.created_at_external) "
+                    "      < NOW() - make_interval(days => 30)) DESC, "
+                    "COALESCE(SUM(d.price_cents) FILTER (WHERE d.status='open'), 0) DESC "
+                    "LIMIT 12"
+                ),
+                params,
+            )
+        ).all()
+
         return {
             "mock": False,
             "connection_id": str(conn.id),
@@ -688,6 +855,49 @@ async def dashboard_sales(
                     "closed_at": _iso(row[8]),
                 }
                 for row in top_deal_rows
+            ],
+            "sales_cycle": {
+                "avg_won_cycle_days": round(float(sales_cycle[0] or 0), 1) if sales_cycle else 0,
+                "avg_lost_cycle_days": round(float(sales_cycle[1] or 0), 1) if sales_cycle else 0,
+                "avg_open_age_days": round(float(sales_cycle[2] or 0), 1) if sales_cycle else 0,
+                "stale_open_deals": int(sales_cycle[3] or 0) if sales_cycle else 0,
+                "stale_open_amount_rub": _rub(sales_cycle[4] if sales_cycle else 0),
+            },
+            "open_age_buckets": [
+                {
+                    "bucket": row[0],
+                    "label": row[1],
+                    "deals": int(row[3] or 0),
+                    "amount_rub": _rub(row[4]),
+                }
+                for row in age_bucket_rows
+            ],
+            "pipeline_health": [
+                {
+                    "pipeline": row[0],
+                    "deals": int(row[1] or 0),
+                    "open_deals": int(row[2] or 0),
+                    "won_deals": int(row[3] or 0),
+                    "lost_deals": int(row[4] or 0),
+                    "stale_open_deals": int(row[5] or 0),
+                    "open_amount_rub": _rub(row[6]),
+                    "avg_open_age_days": round(float(row[7] or 0), 1),
+                    "oldest_open_age_days": round(float(row[8] or 0), 1),
+                    "won_rate": round(float(row[3] or 0) / float(row[1] or 1), 4),
+                }
+                for row in pipeline_health_rows
+            ],
+            "manager_risk": [
+                {
+                    "user_id": str(row[0]),
+                    "name": row[1],
+                    "open_deals": int(row[2] or 0),
+                    "stale_open_deals": int(row[3] or 0),
+                    "open_amount_rub": _rub(row[4]),
+                    "avg_open_age_days": round(float(row[5] or 0), 1),
+                    "oldest_open_age_days": round(float(row[6] or 0), 1),
+                }
+                for row in manager_risk_rows
             ],
         }
     except Exception:

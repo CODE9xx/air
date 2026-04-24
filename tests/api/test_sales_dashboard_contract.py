@@ -12,6 +12,10 @@ def test_sales_dashboard_endpoint_returns_datalens_style_sections():
     assert "pipeline_breakdown" in source
     assert "manager_leaderboard" in source
     assert "top_deals" in source
+    assert "sales_cycle" in source
+    assert "open_age_buckets" in source
+    assert "pipeline_health" in source
+    assert "manager_risk" in source
 
 
 def test_sales_dashboard_uses_active_export_filters():
