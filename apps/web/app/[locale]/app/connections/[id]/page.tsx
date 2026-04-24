@@ -11,7 +11,6 @@ import { Button } from '@/components/ui/Button';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { formatDate } from '@/lib/utils';
 import { useToast } from '@/components/ui/Toast';
-import { useUserAuth } from '@/components/providers/AuthProvider';
 
 /**
  * Флаги OAuth-колбэка, которые может присылать backend для конкретного connection.
@@ -26,6 +25,41 @@ type OAuthFlash =
   | 'amocrm_credentials_missing'
   | 'mock_oauth_ok';
 
+type ExportPreset = 'last12Months' | 'currentYear' | 'custom';
+
+type ExportPipeline = {
+  id: string;
+  name: string;
+  stages: Array<{ id: string; name: string; sort_order?: number | null }>;
+};
+
+type ExportOptions = {
+  connection_id: string;
+  pipelines: ExportPipeline[];
+  source: string;
+  empty_reason?: string | null;
+};
+
+type JobStatus = {
+  id: string;
+  status: 'queued' | 'running' | 'succeeded' | 'failed' | string;
+  error?: string | null;
+};
+
+function inputDate(value: Date): string {
+  return value.toISOString().slice(0, 10);
+}
+
+function defaultDateRange(preset: ExportPreset): { dateFrom: string; dateTo: string } {
+  const now = new Date();
+  if (preset === 'currentYear') {
+    return { dateFrom: `${now.getFullYear()}-01-01`, dateTo: inputDate(now) };
+  }
+  const from = new Date(now);
+  from.setFullYear(from.getFullYear() - 1);
+  return { dateFrom: inputDate(from), dateTo: inputDate(now) };
+}
+
 export default function ConnectionDetailPage() {
   const t = useTranslations('cabinet.connections');
   const tActions = useTranslations('cabinet.connections.actions');
@@ -36,24 +70,33 @@ export default function ConnectionDetailPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { toast } = useToast();
-  const { user } = useUserAuth();
-  // Task #52.4 follow-up: НЕ подставляем синтетический 'ws-demo-1'.
-  // wsId здесь нужен только для startTrialExport (POST /workspaces/{ws}/export/jobs).
-  // Чтение connection-данных идёт через /crm/connections/{id} и от wsId не зависит,
-  // поэтому страница рендерится корректно даже без workspace.
-  const wsId = user?.workspaces?.[0]?.id ?? null;
   const id = params?.id;
 
   const [conn, setConn] = useState<CrmConnection | null>(null);
   const [loading, setLoading] = useState(true);
+  const [showExportSetup, setShowExportSetup] = useState(false);
+  const [exportOptions, setExportOptions] = useState<ExportOptions | null>(null);
+  const [exportOptionsLoading, setExportOptionsLoading] = useState(false);
+  const [exportPreset, setExportPreset] = useState<ExportPreset>('last12Months');
+  const [dateFrom, setDateFrom] = useState(defaultDateRange('last12Months').dateFrom);
+  const [dateTo, setDateTo] = useState(defaultDateRange('last12Months').dateTo);
+  const [selectedPipelineIds, setSelectedPipelineIds] = useState<string[]>([]);
+  const [exportJobId, setExportJobId] = useState<string | null>(null);
+  const [exportJobStatus, setExportJobStatus] = useState<string | null>(null);
+  const [exportRunning, setExportRunning] = useState(false);
   const flashShown = useRef(false);
+
+  const reloadConnection = async () => {
+    if (!id) return;
+    const res = await api.get<CrmConnection>(`/crm/connections/${id}`);
+    setConn(res);
+  };
 
   useEffect(() => {
     if (!id) return;
     (async () => {
       try {
-        const res = await api.get<CrmConnection>(`/crm/connections/${id}`);
-        setConn(res);
+        await reloadConnection();
       } catch {
         toast({ kind: 'error', title: tCommon('error') });
       } finally {
@@ -108,6 +151,84 @@ export default function ConnectionDetailPage() {
     }
   };
 
+  const openRealExportSetup = async () => {
+    if (!conn) return;
+    setShowExportSetup(true);
+    if (exportOptions) return;
+    setExportOptionsLoading(true);
+    try {
+      const options = await api.get<ExportOptions>(`/crm/connections/${conn.id}/export/options`);
+      setExportOptions(options);
+      setSelectedPipelineIds(options.pipelines.map((p) => p.id));
+    } catch {
+      toast({ kind: 'error', title: tCommon('error') });
+    } finally {
+      setExportOptionsLoading(false);
+    }
+  };
+
+  const applyPreset = (preset: ExportPreset) => {
+    setExportPreset(preset);
+    if (preset === 'custom') return;
+    const next = defaultDateRange(preset);
+    setDateFrom(next.dateFrom);
+    setDateTo(next.dateTo);
+  };
+
+  const togglePipeline = (pipelineId: string) => {
+    setSelectedPipelineIds((current) =>
+      current.includes(pipelineId)
+        ? current.filter((id) => id !== pipelineId)
+        : [...current, pipelineId],
+    );
+  };
+
+  const startRealExport = async () => {
+    if (!conn) return;
+    setExportRunning(true);
+    try {
+      const res = await api.post<{ job_id: string }>(
+        `/crm/connections/${conn.id}/full-export`,
+        {
+          date_from: dateFrom,
+          date_to: dateTo,
+          pipeline_ids: selectedPipelineIds,
+        },
+      );
+      setExportJobId(res.job_id);
+      setExportJobStatus('queued');
+      toast({ kind: 'success', title: tActions('realExportStarted') });
+    } catch {
+      toast({ kind: 'error', title: tCommon('error') });
+      setExportRunning(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!exportJobId) return;
+    const timer = window.setInterval(async () => {
+      try {
+        const job = await api.get<JobStatus>(`/jobs/${exportJobId}`);
+        setExportJobStatus(job.status);
+        if (job.status === 'succeeded') {
+          window.clearInterval(timer);
+          setExportRunning(false);
+          await reloadConnection();
+          toast({ kind: 'success', title: tActions('realExportDone') });
+        }
+        if (job.status === 'failed') {
+          window.clearInterval(timer);
+          setExportRunning(false);
+          toast({ kind: 'error', title: job.error ?? tCommon('error') });
+        }
+      } catch {
+        window.clearInterval(timer);
+        setExportRunning(false);
+      }
+    }, 2500);
+    return () => window.clearInterval(timer);
+  }, [exportJobId, tActions, tCommon, toast]);
+
   if (loading) return <Skeleton className="h-40" />;
   if (!conn) return null;
 
@@ -128,6 +249,7 @@ export default function ConnectionDetailPage() {
     ? t('detail.lastPullAt')
     : t('detail.lastTrialExportAt');
   const isMock = Boolean(conn.metadata?.mock);
+  const activeExport = conn.metadata?.active_export;
 
   return (
     <div className="space-y-6">
@@ -195,6 +317,118 @@ export default function ConnectionDetailPage() {
         </section>
       )}
 
+      {activeExport && (
+        <section className="card p-5 text-sm space-y-3">
+          <h2 className="text-lg font-semibold">{t('detail.activeExport')}</h2>
+          <div className="grid md:grid-cols-4 gap-4">
+            <Field label={t('detail.exportDateBasis')} value={t('detail.createdAtBasis')} />
+            <Field label={t('detail.exportDateFrom')} value={activeExport.date_from ?? '—'} />
+            <Field label={t('detail.exportDateTo')} value={activeExport.date_to ?? '—'} />
+            <Field
+              label={t('detail.exportPipelines')}
+              value={
+                activeExport.pipeline_ids && activeExport.pipeline_ids.length > 0
+                  ? String(activeExport.pipeline_ids.length)
+                  : t('detail.allPipelines')
+              }
+            />
+          </div>
+        </section>
+      )}
+
+      {showExportSetup && (
+        <section className="card p-5 text-sm space-y-4">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <h2 className="text-lg font-semibold">{t('detail.realExportTitle')}</h2>
+            {exportJobStatus && (
+              <Badge tone={exportJobStatus === 'failed' ? 'danger' : exportJobStatus === 'succeeded' ? 'success' : 'info'}>
+                {exportJobStatus}
+              </Badge>
+            )}
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {(['last12Months', 'currentYear', 'custom'] as ExportPreset[]).map((preset) => (
+              <Button
+                key={preset}
+                type="button"
+                size="sm"
+                variant={exportPreset === preset ? 'primary' : 'secondary'}
+                onClick={() => applyPreset(preset)}
+              >
+                {t(`detail.${preset}`)}
+              </Button>
+            ))}
+          </div>
+          <div className="grid md:grid-cols-2 gap-3">
+            <label className="block">
+              <span className="text-xs text-muted-foreground">{t('detail.exportDateFrom')}</span>
+              <input
+                className="mt-1 w-full rounded-md border border-border bg-white px-3 py-2"
+                type="date"
+                value={dateFrom}
+                onChange={(event) => {
+                  setExportPreset('custom');
+                  setDateFrom(event.target.value);
+                }}
+              />
+            </label>
+            <label className="block">
+              <span className="text-xs text-muted-foreground">{t('detail.exportDateTo')}</span>
+              <input
+                className="mt-1 w-full rounded-md border border-border bg-white px-3 py-2"
+                type="date"
+                value={dateTo}
+                onChange={(event) => {
+                  setExportPreset('custom');
+                  setDateTo(event.target.value);
+                }}
+              />
+            </label>
+          </div>
+          <div className="space-y-2">
+            <div className="flex items-center justify-between gap-3">
+              <div className="font-medium">{t('detail.exportPipelines')}</div>
+              {exportOptions && exportOptions.pipelines.length > 0 && (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setSelectedPipelineIds(exportOptions.pipelines.map((p) => p.id))}
+                >
+                  {t('detail.selectAllPipelines')}
+                </Button>
+              )}
+            </div>
+            {exportOptionsLoading && <Skeleton className="h-12" />}
+            {exportOptions && exportOptions.pipelines.length === 0 && (
+              <div className="rounded-md border border-border bg-muted p-3 text-muted-foreground">
+                {t('detail.allPipelines')}
+              </div>
+            )}
+            {exportOptions && exportOptions.pipelines.length > 0 && (
+              <div className="grid md:grid-cols-2 gap-2">
+                {exportOptions.pipelines.map((pipeline) => (
+                  <label
+                    key={pipeline.id}
+                    className="flex items-center justify-between gap-3 rounded-md border border-border px-3 py-2"
+                  >
+                    <span className="truncate">{pipeline.name}</span>
+                    <input
+                      type="checkbox"
+                      checked={selectedPipelineIds.includes(pipeline.id)}
+                      onChange={() => togglePipeline(pipeline.id)}
+                    />
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
+          <Button onClick={startRealExport} loading={exportRunning}>
+            {tActions('startRealExport')}
+          </Button>
+        </section>
+      )}
+
       <div className="flex flex-wrap gap-2">
         <Link
           href={`/${locale}/app/connections/${conn.id}/audit`}
@@ -202,6 +436,7 @@ export default function ConnectionDetailPage() {
         >
           {tActions('runAudit')}
         </Link>
+        <Button variant="secondary" onClick={openRealExportSetup}>{tActions('configureRealExport')}</Button>
         <Button variant="secondary" onClick={startTrialExport}>{tActions('trialExport')}</Button>
         <Button variant="secondary" onClick={doPause}>
           {conn.status === 'paused' ? tActions('resume') : tActions('pause')}

@@ -258,6 +258,10 @@ class CRMConnector(Protocol):
         access_token: str,
         since: Optional[datetime] = None,
         limit: Optional[int] = None,
+        *,
+        created_from: Optional[datetime] = None,
+        created_to: Optional[datetime] = None,
+        pipeline_ids: Optional[list[str]] = None,
     ) -> Iterable[RawDeal]: ...
 
     def fetch_contacts(

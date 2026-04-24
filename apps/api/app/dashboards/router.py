@@ -94,6 +94,67 @@ def _use_mock(conn: CrmConnection) -> bool:
     return False
 
 
+def _active_export(conn: CrmConnection) -> dict[str, Any]:
+    meta = conn.metadata_json or {}
+    active = meta.get("active_export")
+    return active if isinstance(active, dict) else {}
+
+
+def _dashboard_filters(
+    conn: CrmConnection,
+    *,
+    deal_alias: str = "d",
+    pipeline_alias: str = "p",
+) -> tuple[str, dict[str, Any]]:
+    active = _active_export(conn)
+    clauses: list[str] = []
+    params: dict[str, Any] = {}
+    date_from = active.get("date_from")
+    date_to = active.get("date_to")
+    if date_from:
+        clauses.append(f"{deal_alias}.created_at_external >= CAST(:active_date_from AS date)")
+        params["active_date_from"] = str(date_from)
+    if date_to:
+        clauses.append(
+            f"{deal_alias}.created_at_external < CAST(:active_date_to AS date) + INTERVAL '1 day'"
+        )
+        params["active_date_to"] = str(date_to)
+    pipeline_ids = active.get("pipeline_ids")
+    if isinstance(pipeline_ids, list) and pipeline_ids:
+        placeholders: list[str] = []
+        for idx, pipeline_id in enumerate(pipeline_ids):
+            key = f"active_pipeline_{idx}"
+            placeholders.append(f":{key}")
+            params[key] = str(pipeline_id)
+        clauses.append(f"{pipeline_alias}.external_id IN ({', '.join(placeholders)})")
+    if not clauses:
+        return "", params
+    return "WHERE " + " AND ".join(clauses), params
+
+
+def _dashboard_deal_join_filters(
+    conn: CrmConnection,
+    *,
+    deal_alias: str = "d",
+) -> tuple[str, dict[str, Any]]:
+    active = _active_export(conn)
+    clauses: list[str] = []
+    params: dict[str, Any] = {}
+    date_from = active.get("date_from")
+    date_to = active.get("date_to")
+    if date_from:
+        clauses.append(f"{deal_alias}.created_at_external >= CAST(:active_date_from AS date)")
+        params["active_date_from"] = str(date_from)
+    if date_to:
+        clauses.append(
+            f"{deal_alias}.created_at_external < CAST(:active_date_to AS date) + INTERVAL '1 day'"
+        )
+        params["active_date_to"] = str(date_to)
+    if not clauses:
+        return "", params
+    return " AND " + " AND ".join(clauses), params
+
+
 # -------------------- /crm/connections/:id/dashboard/* --------------------
 
 @router.get("/crm/connections/{connection_id}/dashboard/overview")
@@ -107,9 +168,16 @@ async def dashboard_overview(
         return mock_dashboard_overview(str(conn.id))
     try:
         await _set_search_path(session, conn.tenant_schema)
+        where_sql, params = _dashboard_filters(conn)
         rows = (
             await session.execute(
-                text("SELECT status, COUNT(*) FROM deals GROUP BY status")
+                text(
+                    "SELECT d.status, COUNT(*) "
+                    "FROM deals d LEFT JOIN pipelines p ON p.id = d.pipeline_id "
+                    f"{where_sql} "
+                    "GROUP BY d.status"
+                ),
+                params,
             )
         ).all()
         by_status = {r[0] or "unknown": r[1] for r in rows}
@@ -137,13 +205,29 @@ async def dashboard_funnel(
         return mock_dashboard_funnel(str(conn.id))
     try:
         await _set_search_path(session, conn.tenant_schema)
+        deal_join_sql, deal_params = _dashboard_deal_join_filters(conn)
+        active = _active_export(conn)
+        pipeline_ids = active.get("pipeline_ids")
+        stage_where = ""
+        stage_params: dict[str, Any] = {}
+        if isinstance(pipeline_ids, list) and pipeline_ids:
+            placeholders = []
+            for idx, pipeline_id in enumerate(pipeline_ids):
+                key = f"stage_pipeline_{idx}"
+                placeholders.append(f":{key}")
+                stage_params[key] = str(pipeline_id)
+            stage_where = f"WHERE p.external_id IN ({', '.join(placeholders)})"
         rows = (
             await session.execute(
                 text(
                     "SELECT s.name, s.sort_order, COUNT(d.id) "
-                    "FROM stages s LEFT JOIN deals d ON d.stage_id = s.id "
+                    "FROM stages s "
+                    "LEFT JOIN pipelines p ON p.id = s.pipeline_id "
+                    f"LEFT JOIN deals d ON d.stage_id = s.id {deal_join_sql} "
+                    f"{stage_where} "
                     "GROUP BY s.id, s.name, s.sort_order ORDER BY s.sort_order"
-                )
+                ),
+                {**deal_params, **stage_params},
             )
         ).all()
         prev: int | None = None
@@ -180,15 +264,20 @@ async def dashboard_managers(
         return mock_dashboard_managers(str(conn.id))
     try:
         await _set_search_path(session, conn.tenant_schema)
+        where_sql, params = _dashboard_filters(conn)
         rows = (
             await session.execute(
                 text(
                     "SELECT u.id, u.full_name, "
                     "COUNT(d.id) FILTER (WHERE d.status='open'), "
                     "COUNT(d.id) FILTER (WHERE d.status='won') "
-                    "FROM crm_users u LEFT JOIN deals d ON d.responsible_user_id = u.id "
+                    "FROM crm_users u "
+                    "LEFT JOIN deals d ON d.responsible_user_id = u.id "
+                    "LEFT JOIN pipelines p ON p.id = d.pipeline_id "
+                    f"{where_sql} "
                     "GROUP BY u.id, u.full_name"
-                )
+                ),
+                params,
             )
         ).all()
         managers = [

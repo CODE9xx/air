@@ -69,6 +69,22 @@ export interface CrmConnectionMetadata {
     contacts?: number;
     deals?: number;
   };
+  active_export?: {
+    mode?: 'real' | string;
+    date_basis?: 'created_at' | string;
+    date_from?: string | null;
+    date_to?: string | null;
+    pipeline_ids?: string[];
+    counts?: {
+      pipelines?: number;
+      stages?: number;
+      users?: number;
+      companies?: number;
+      contacts?: number;
+      deals?: number;
+    };
+    completed_at?: string | null;
+  };
   // #44.6 external_button:
   amocrm_auth_mode?: 'static_client' | 'external_button';
   amocrm_external_integration?: {
@@ -187,7 +203,7 @@ export interface AuditReport {
 }
 
 export interface DashboardOverview {
-  funnel: Array<{ stage: string; count: number; conversion_from_previous: number }>;
+  funnel: Array<{ stage: string; count: number; conversion_from_previous: number | null }>;
   conversions: { lead_to_deal: number; deal_to_won: number };
   managers_activity: Array<{ user_id: string; name: string; deals_open: number; deals_won: number }>;
   abandoned_deals: number;

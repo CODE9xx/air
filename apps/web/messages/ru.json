@@ -217,6 +217,10 @@
       "statusDeleted": "Удалено",
       "actions": {
         "runAudit": "Запустить аудит",
+        "configureRealExport": "Настроить реальную выгрузку",
+        "startRealExport": "Запустить выгрузку",
+        "realExportStarted": "Выгрузка запущена",
+        "realExportDone": "Выгрузка завершена",
         "trialExport": "Тестовая выгрузка 100 сделок",
         "pause": "Поставить на паузу",
         "resume": "Возобновить",
@@ -254,7 +258,19 @@
         "pullUsers": "Пользователей",
         "pullCompanies": "Компаний",
         "pullContacts": "Контактов",
-        "pullDeals": "Сделок"
+        "pullDeals": "Сделок",
+        "activeExport": "Активная выгрузка",
+        "realExportTitle": "Реальная выгрузка amoCRM",
+        "exportDateBasis": "Дата",
+        "createdAtBasis": "Дата создания сделки",
+        "exportDateFrom": "С",
+        "exportDateTo": "По",
+        "exportPipelines": "Воронки",
+        "allPipelines": "Все воронки",
+        "selectAllPipelines": "Выбрать все",
+        "last12Months": "Последние 12 месяцев",
+        "currentYear": "Текущий год",
+        "custom": "Период"
       },
       "new": {
         "title": "Новое подключение",

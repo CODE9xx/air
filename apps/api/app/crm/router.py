@@ -10,13 +10,14 @@ tenant_schema=NULL (его создаёт bootstrap_tenant_schema job).
 """
 from __future__ import annotations
 
+import re
 import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import (
@@ -33,12 +34,11 @@ from app.crm.schemas import (
     CreateMockConnectionRequest,
     DeleteConfirmRequest,
     ExportEstimateRequest,
+    FullExportRequest,
     JobCreatedResponse,
     PatchConnectionRequest,
 )
 from app.db.models import (
-    BillingAccount,
-    BillingLedger,
     CrmConnection,
     DeletionRequest,
     Job,
@@ -58,6 +58,7 @@ router = APIRouter(prefix="/crm", tags=["crm"])
 ws_crm_router = APIRouter(tags=["crm"])
 
 settings = get_settings()
+_TENANT_SCHEMA_RE = re.compile(r"^crm_amo_[0-9a-f]{8}$")
 
 
 def _now() -> datetime:
@@ -561,6 +562,57 @@ async def trial_export(
     return JobCreatedResponse(job_id=str(job.id))
 
 
+# -------------------- Export options + full export --------------------
+
+@router.get("/connections/{connection_id}/export/options")
+async def export_options(
+    connection_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    conn, _ = await _get_conn_for_user(session, user, connection_id)
+    schema = conn.tenant_schema
+    if not schema or not _TENANT_SCHEMA_RE.match(schema):
+        return {
+            "connection_id": str(conn.id),
+            "pipelines": [],
+            "source": "tenant_cache",
+            "empty_reason": "tenant_schema_missing",
+        }
+
+    q_schema = f'"{schema}"'
+    rows = (
+        await session.execute(
+            text(
+                f"SELECT p.external_id, p.name, s.external_id, s.name, s.sort_order "
+                f"FROM {q_schema}.pipelines p "
+                f"LEFT JOIN {q_schema}.stages s ON s.pipeline_id = p.id "
+                "WHERE p.external_id NOT LIKE 'ext-pipe-%' "
+                "GROUP BY p.id, p.external_id, p.name, s.id, s.external_id, s.name, s.sort_order "
+                "ORDER BY p.name, s.sort_order NULLS LAST, s.name"
+            )
+        )
+    ).all()
+
+    pipelines: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        pipeline_id = str(row[0])
+        item = pipelines.setdefault(
+            pipeline_id,
+            {"id": pipeline_id, "name": row[1] or pipeline_id, "stages": []},
+        )
+        if row[2] is not None:
+            item["stages"].append(
+                {"id": str(row[2]), "name": row[3] or str(row[2]), "sort_order": row[4]}
+            )
+    return {
+        "connection_id": str(conn.id),
+        "pipelines": list(pipelines.values()),
+        "source": "tenant_cache",
+        "empty_reason": None if pipelines else "no_real_pipelines_cached",
+    }
+
+
 # -------------------- Export estimate + full export --------------------
 
 @router.post("/connections/{connection_id}/export/estimate")
@@ -589,34 +641,37 @@ async def export_estimate(
 @router.post("/connections/{connection_id}/full-export", status_code=status.HTTP_202_ACCEPTED)
 async def full_export(
     connection_id: uuid.UUID,
+    body: FullExportRequest,
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> JobCreatedResponse:
     conn, ws = await _get_conn_for_user(session, user, connection_id)
-    # Проверка баланса.
-    ba = (
-        await session.execute(
-            select(BillingAccount).where(BillingAccount.workspace_id == ws.id)
-        )
-    ).scalar_one_or_none()
-    if not ba or ba.balance_cents <= 0:
+    if body.date_from > body.date_to:
         raise HTTPException(
-            status_code=status.HTTP_402_PAYMENT_REQUIRED,
-            detail={"error": {"code": "conflict", "message": "Insufficient balance"}},
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"error": {"code": "validation_error", "message": "date_from must be <= date_to"}},
         )
-    payload = {"connection_id": str(conn.id), "trial": False}
+    payload = {
+        "connection_id": str(conn.id),
+        "first_pull": False,
+        "date_from_iso": body.date_from.isoformat(),
+        "date_to_iso": body.date_to.isoformat(),
+        "pipeline_ids": [str(pid) for pid in body.pipeline_ids],
+        "cleanup_trial": True,
+        "contacts_limit": 2000,
+    }
     job = Job(
         workspace_id=ws.id,
         crm_connection_id=conn.id,
-        kind="build_export_zip",
-        queue=queue_for_kind("build_export_zip"),
+        kind="pull_amocrm_core",
+        queue=queue_for_kind("pull_amocrm_core"),
         status="queued",
         payload=payload,
     )
     session.add(job)
     await session.flush()  # populates job.id (Task #52.6)
     rq_id = enqueue(
-        "build_export_zip", payload, job_row_id=str(job.id)
+        "pull_amocrm_core", payload, job_row_id=str(job.id)
     )
     job.rq_job_id = rq_id
     await session.commit()

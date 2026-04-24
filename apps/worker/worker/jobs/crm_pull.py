@@ -36,11 +36,12 @@ enqueue'им audit, чтобы UI-пайплайн был одинаковым.
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import os
 import re
 import uuid as uuid_mod
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, time, timedelta, timezone
 from typing import Any, Iterable
 
 from sqlalchemy import text
@@ -210,6 +211,188 @@ def _amocrm_subdomain(external_domain: str | None) -> str | None:
 
 def _uuid() -> str:
     return str(uuid_mod.uuid4())
+
+
+def _parse_export_date_start(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        if "T" not in value:
+            return datetime.combine(
+                datetime.fromisoformat(value).date(),
+                time.min,
+                tzinfo=timezone.utc,
+            )
+        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+def _parse_export_date_end(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        if "T" not in value:
+            return datetime.combine(
+                datetime.fromisoformat(value).date(),
+                time.max,
+                tzinfo=timezone.utc,
+            )
+        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+def _build_active_export_metadata(
+    *,
+    date_from_iso: str | None,
+    date_to_iso: str | None,
+    pipeline_ids: list[str] | None,
+    counts: dict[str, int],
+) -> dict[str, Any]:
+    return {
+        "mode": "real",
+        "date_basis": "created_at",
+        "date_from": date_from_iso,
+        "date_to": date_to_iso,
+        "pipeline_ids": [str(pid) for pid in (pipeline_ids or [])],
+        "counts": counts,
+        "completed_at": datetime.now(tz=timezone.utc).isoformat(),
+    }
+
+
+def _cleanup_trial_export_rows(sess, *, schema: str) -> None:
+    """Remove only deterministic Code9 trial rows before a real export."""
+    q_schema = f'"{schema}"'
+    # Delete child tables first to satisfy FK constraints.
+    statements = [
+        (f"DELETE FROM {q_schema}.deals WHERE external_id LIKE 'ext-deal-%'", {}),
+        (f"DELETE FROM {q_schema}.contacts WHERE external_id LIKE 'ext-contact-%'", {}),
+        (f"DELETE FROM {q_schema}.companies WHERE external_id LIKE 'ext-company-%'", {}),
+        (f"DELETE FROM {q_schema}.stages WHERE external_id LIKE 'ext-stage-%'", {}),
+        (f"DELETE FROM {q_schema}.crm_users WHERE external_id LIKE 'ext-user-%'", {}),
+        (f"DELETE FROM {q_schema}.pipelines WHERE external_id LIKE 'ext-pipe-%'", {}),
+    ]
+    for sql, params in statements:
+        sess.execute(text(sql), params)
+
+
+def _pipeline_filter_placeholders(
+    pipeline_ids: list[str] | None,
+    *,
+    prefix: str,
+) -> tuple[str, dict[str, str]]:
+    placeholders: list[str] = []
+    params: dict[str, str] = {}
+    for idx, pipeline_id in enumerate(pipeline_ids or []):
+        key = f"{prefix}_{idx}"
+        placeholders.append(f":{key}")
+        params[key] = str(pipeline_id)
+    return ", ".join(placeholders), params
+
+
+def _tenant_table_count(sess, *, schema: str, table: str) -> int:
+    allowed = {"pipelines", "stages", "crm_users", "contacts", "deals"}
+    if table not in allowed:
+        raise ValueError(f"Unsupported tenant count table: {table}")
+    q_schema = f'"{schema}"'
+    value = sess.execute(text(f"SELECT COUNT(*) FROM {q_schema}.{table}")).scalar()
+    return int(value or 0)
+
+
+def _tenant_active_deals_count(
+    sess,
+    *,
+    schema: str,
+    created_from: datetime | None,
+    created_to: datetime | None,
+    pipeline_ids: list[str] | None,
+) -> int:
+    q_schema = f'"{schema}"'
+    clauses: list[str] = []
+    params: dict[str, Any] = {}
+    if created_from:
+        clauses.append("d.created_at_external >= :created_from")
+        params["created_from"] = created_from
+    if created_to:
+        clauses.append("d.created_at_external <= :created_to")
+        params["created_to"] = created_to
+    if pipeline_ids:
+        pipeline_placeholders, pipeline_params = _pipeline_filter_placeholders(
+            pipeline_ids,
+            prefix="active_pipeline",
+        )
+        clauses.append(f"p.external_id IN ({pipeline_placeholders})")
+        params.update(pipeline_params)
+    where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    value = sess.execute(
+        text(
+            f"SELECT COUNT(*) "
+            f"FROM {q_schema}.deals d "
+            f"LEFT JOIN {q_schema}.pipelines p ON p.id = d.pipeline_id "
+            f"{where_sql}"
+        ),
+        params,
+    ).scalar()
+    return int(value or 0)
+
+
+def _tenant_active_export_counts(
+    sess,
+    *,
+    schema: str,
+    created_from: datetime | None,
+    created_to: datetime | None,
+    pipeline_ids: list[str] | None,
+) -> dict[str, int]:
+    q_schema = f'"{schema}"'
+    counts = {
+        "pipelines": _tenant_table_count(sess, schema=schema, table="pipelines"),
+        "stages": _tenant_table_count(sess, schema=schema, table="stages"),
+        "users": _tenant_table_count(sess, schema=schema, table="crm_users"),
+        "contacts": _tenant_table_count(sess, schema=schema, table="contacts"),
+        "deals": _tenant_active_deals_count(
+            sess,
+            schema=schema,
+            created_from=created_from,
+            created_to=created_to,
+            pipeline_ids=pipeline_ids,
+        ),
+    }
+    if pipeline_ids:
+        pipeline_placeholders, pipeline_params = _pipeline_filter_placeholders(
+            pipeline_ids,
+            prefix="selected_pipeline",
+        )
+        counts["pipelines"] = int(
+            sess.execute(
+                text(
+                    f"SELECT COUNT(*) FROM {q_schema}.pipelines "
+                    f"WHERE external_id IN ({pipeline_placeholders})"
+                ),
+                pipeline_params,
+            ).scalar()
+            or 0
+        )
+        counts["stages"] = int(
+            sess.execute(
+                text(
+                    f"SELECT COUNT(*) "
+                    f"FROM {q_schema}.stages s "
+                    f"JOIN {q_schema}.pipelines p ON p.id = s.pipeline_id "
+                    f"WHERE p.external_id IN ({pipeline_placeholders})"
+                ),
+                pipeline_params,
+            ).scalar()
+            or 0
+        )
+    return counts
 
 
 # ---------------------------------------------------------------------------
@@ -386,6 +569,8 @@ def _pull_contacts(
     schema: str,
 ) -> dict[str, str]:
     """Тянет контакты. Маппинг external_id → UUID. FK responsible_user_id → crm_users."""
+    if limit == 0:
+        return {}
     ext_to_uuid: dict[str, str] = {}
     q_schema = f'"{schema}"'
 
@@ -441,6 +626,9 @@ def _pull_deals(
     user_map: dict[str, str],
     contact_map: dict[str, str],
     since: datetime | None,
+    created_from: datetime | None,
+    created_to: datetime | None,
+    pipeline_ids: list[str] | None,
     limit: int | None,
     schema: str,
 ) -> int:
@@ -451,7 +639,14 @@ def _pull_deals(
     """
     processed = 0
     q_schema = f'"{schema}"'
-    for raw_d in connector.fetch_deals(access_token, since=since, limit=limit):
+    for raw_d in connector.fetch_deals(
+        access_token,
+        since=since,
+        limit=limit,
+        created_from=created_from,
+        created_to=created_to,
+        pipeline_ids=pipeline_ids,
+    ):
         ext_id = raw_d.crm_id
         if not ext_id:
             continue
@@ -517,6 +712,10 @@ def pull_amocrm_core(
     *,
     first_pull: bool = False,
     since_iso: str | None = None,
+    date_from_iso: str | None = None,
+    date_to_iso: str | None = None,
+    pipeline_ids: list[str] | None = None,
+    cleanup_trial: bool = False,
     deals_limit: int | None = None,
     contacts_limit: int | None = None,
     job_row_id: str | None = None,
@@ -529,6 +728,12 @@ def pull_amocrm_core(
         first_pull: True только после OAuth-callback'а. В MOCK-режиме
             делегирует ``trial_export``, чтобы FE увидел данные.
         since_iso: ISO-8601 UTC timestamp. ``None`` → полный дамп.
+        date_from_iso / date_to_iso: пользовательский аналитический срез по
+            ``created_at`` сделки. Даты без времени трактуются как начало и
+            конец дня UTC.
+        pipeline_ids: external amoCRM pipeline ids. ``None`` / ``[]`` → все.
+        cleanup_trial: удалить только Code9 trial rows ``ext-*`` перед
+            реальной выгрузкой, чтобы mock-данные не смешались с amoCRM.
         deals_limit / contacts_limit: верхние отсечки (для trial/audit).
         job_row_id: UUID public.jobs, проставляется enqueue-логикой.
 
@@ -621,6 +826,9 @@ def pull_amocrm_core(
                     extra={"connection_id": connection_id, "since_iso": since_iso},
                 )
                 since = None
+        created_from = _parse_export_date_start(date_from_iso)
+        created_to = _parse_export_date_end(date_to_iso)
+        selected_pipeline_ids = [str(pid) for pid in (pipeline_ids or []) if str(pid).strip()]
 
         q_schema = f'"{schema}"'
         counts: dict[str, int] = {}
@@ -637,23 +845,43 @@ def pull_amocrm_core(
                 extra={"connection_id": connection_id, "schema": schema, "first_pull": first_pull},
             )
 
+            if cleanup_trial:
+                _cleanup_trial_export_rows(sess, schema=schema)
+                print(f"[pull_amocrm_core] schema={schema} cleanup_trial=done", flush=True)
+
             pipeline_map = _pull_pipelines(sess, connector, access_token, schema=schema)
             counts["pipelines"] = len(pipeline_map)
+            print(
+                f"[pull_amocrm_core] schema={schema} pipelines={counts['pipelines']}",
+                flush=True,
+            )
 
             stage_map = _pull_stages(
                 sess, connector, access_token, pipeline_map, schema=schema
             )
             counts["stages"] = len(stage_map)
+            print(
+                f"[pull_amocrm_core] schema={schema} stages={counts['stages']}",
+                flush=True,
+            )
 
             user_map = _pull_users(sess, connector, access_token, schema=schema)
             counts["users"] = len(user_map)
+            print(
+                f"[pull_amocrm_core] schema={schema} users={counts['users']}",
+                flush=True,
+            )
 
             contact_map = _pull_contacts(
                 sess, connector, access_token, user_map, contacts_limit, schema=schema
             )
             counts["contacts"] = len(contact_map)
+            print(
+                f"[pull_amocrm_core] schema={schema} contacts={counts['contacts']}",
+                flush=True,
+            )
 
-            deals_count = _pull_deals(
+            deals_processed = _pull_deals(
                 sess,
                 connector,
                 access_token,
@@ -662,10 +890,28 @@ def pull_amocrm_core(
                 user_map=user_map,
                 contact_map=contact_map,
                 since=since,
+                created_from=created_from,
+                created_to=created_to,
+                pipeline_ids=selected_pipeline_ids,
                 limit=deals_limit,
                 schema=schema,
             )
-            counts["deals"] = deals_count
+            print(
+                f"[pull_amocrm_core] schema={schema} deals_processed={deals_processed}",
+                flush=True,
+            )
+
+            counts = _tenant_active_export_counts(
+                sess,
+                schema=schema,
+                created_from=created_from,
+                created_to=created_to,
+                pipeline_ids=selected_pipeline_ids,
+            )
+            print(
+                f"[pull_amocrm_core] schema={schema} active_counts={counts}",
+                flush=True,
+            )
 
         # Обновляем метаданные CrmConnection.
         # Bug G (#52.3G): реальное имя колонки в БД — ``metadata`` (см.
@@ -675,7 +921,6 @@ def pull_amocrm_core(
         # здесь используем реальное имя колонки — ``metadata``, а НЕ
         # ``metadata_json``. Регрессия покрыта в
         # ``tests/api/test_crm_pull_metadata_sql_column.py``.
-        import json
         with sync_session() as sess:
             sess.execute(
                 text(
@@ -692,6 +937,12 @@ def pull_amocrm_core(
                         {
                             "last_pull_counts": counts,
                             "last_pull_at": datetime.now(tz=timezone.utc).isoformat(),
+                            "active_export": _build_active_export_metadata(
+                                date_from_iso=date_from_iso,
+                                date_to_iso=date_to_iso,
+                                pipeline_ids=selected_pipeline_ids,
+                                counts=counts,
+                            ),
                         },
                         ensure_ascii=False,
                     ),

@@ -23,5 +23,11 @@ class ExportEstimateRequest(BaseModel):
     date_to: date
 
 
+class FullExportRequest(BaseModel):
+    date_from: date
+    date_to: date
+    pipeline_ids: list[str] = Field(default_factory=list)
+
+
 class JobCreatedResponse(BaseModel):
     job_id: str

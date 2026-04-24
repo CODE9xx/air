@@ -512,6 +512,10 @@ class AmoCrmConnector(CRMConnector):
         access_token: str,
         since: Optional[datetime] = None,
         limit: Optional[int] = None,
+        *,
+        created_from: Optional[datetime] = None,
+        created_to: Optional[datetime] = None,
+        pipeline_ids: Optional[list[str]] = None,
     ) -> Iterable[RawDeal]:
         """
         Выгружает сделки (``/api/v4/leads``).
@@ -520,6 +524,10 @@ class AmoCrmConnector(CRMConnector):
           первичные связи; из них берём ``contact_id`` / ``company_id``.
         * ``since`` → ``filter[updated_at][from]=<unix>``, инкрементальная
           выборка. Без since — полный дамп.
+        * ``created_from``/``created_to`` → пользовательский аналитический
+          срез по дате создания сделки.
+        * ``pipeline_ids`` → выбранные пользователем воронки; пустой список
+          означает "все воронки".
         * ``limit`` — отсечка на стороне caller'а (не per-page, а общая).
 
         Нормализация статусов:
@@ -534,6 +542,12 @@ class AmoCrmConnector(CRMConnector):
         params: dict[str, Any] = {"with": "contacts,companies"}
         if since is not None:
             params["filter[updated_at][from]"] = self._to_epoch(since)
+        if created_from is not None:
+            params["filter[created_at][from]"] = self._to_epoch(created_from)
+        if created_to is not None:
+            params["filter[created_at][to]"] = self._to_epoch(created_to)
+        for idx, pipeline_id in enumerate(pipeline_ids or []):
+            params[f"filter[pipeline_id][{idx}]"] = str(pipeline_id)
 
         yielded = 0
         for item in self._paginated_get(

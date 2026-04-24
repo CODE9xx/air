@@ -217,6 +217,10 @@
       "statusDeleted": "Deleted",
       "actions": {
         "runAudit": "Run audit",
+        "configureRealExport": "Configure real export",
+        "startRealExport": "Start export",
+        "realExportStarted": "Export started",
+        "realExportDone": "Export finished",
         "trialExport": "Trial export of 100 deals",
         "pause": "Pause",
         "resume": "Resume",
@@ -254,7 +258,19 @@
         "pullUsers": "Users",
         "pullCompanies": "Companies",
         "pullContacts": "Contacts",
-        "pullDeals": "Deals"
+        "pullDeals": "Deals",
+        "activeExport": "Active export",
+        "realExportTitle": "Real amoCRM export",
+        "exportDateBasis": "Date",
+        "createdAtBasis": "Deal creation date",
+        "exportDateFrom": "From",
+        "exportDateTo": "To",
+        "exportPipelines": "Pipelines",
+        "allPipelines": "All pipelines",
+        "selectAllPipelines": "Select all",
+        "last12Months": "Last 12 months",
+        "currentYear": "Current year",
+        "custom": "Custom"
       },
       "new": {
         "title": "New connection",

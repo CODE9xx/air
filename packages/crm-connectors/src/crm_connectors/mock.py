@@ -240,9 +240,20 @@ class MockCRMConnector(CRMConnector):
         access_token: str,
         since: Optional[datetime] = None,
         limit: Optional[int] = None,
+        *,
+        created_from: Optional[datetime] = None,
+        created_to: Optional[datetime] = None,
+        pipeline_ids: Optional[list[str]] = None,
     ) -> Iterable[RawDeal]:
         raw = self._get("amo_deals.json")
         raw = self._filter_since(raw, since, "created_at")
+        if created_from is not None:
+            raw = [d for d in raw if (_ts(d.get("created_at")) or created_from) >= created_from]
+        if created_to is not None:
+            raw = [d for d in raw if (_ts(d.get("created_at")) or created_to) <= created_to]
+        if pipeline_ids:
+            selected = {str(pid) for pid in pipeline_ids}
+            raw = [d for d in raw if str(d.get("pipeline_id")) in selected]
         stage_idx = self._stage_kind_index()
         for d in self._paginate(raw, limit):
             yield RawDeal(
