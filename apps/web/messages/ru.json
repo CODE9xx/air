@@ -246,10 +246,13 @@
         "amoId": "ID аккаунта",
         "amoCountry": "Страна",
         "amoCurrency": "Валюта",
+        "lastTrialExportAt": "Последняя тестовая выгрузка",
         "pullCounts": "Данные первичной загрузки",
+        "trialExportCounts": "Данные тестовой выгрузки",
         "pullPipelines": "Воронок",
         "pullStages": "Этапов",
         "pullUsers": "Пользователей",
+        "pullCompanies": "Компаний",
         "pullContacts": "Контактов",
         "pullDeals": "Сделок"
       },

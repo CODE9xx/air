@@ -119,8 +119,14 @@ export default function ConnectionDetailPage() {
   } as const)[conn.status] ?? 'neutral';
 
   const amo = conn.metadata?.amo_account;
-  const pullCounts = conn.metadata?.last_pull_counts;
-  const lastPullAt = conn.metadata?.last_pull_at ?? null;
+  const pullCounts = conn.metadata?.last_pull_counts ?? conn.metadata?.last_trial_export_counts;
+  const pullCountsTitle = conn.metadata?.last_pull_counts
+    ? t('detail.pullCounts')
+    : t('detail.trialExportCounts');
+  const lastPullAt = conn.metadata?.last_pull_at ?? conn.metadata?.last_trial_export_at ?? null;
+  const lastPullAtLabel = conn.metadata?.last_pull_at
+    ? t('detail.lastPullAt')
+    : t('detail.lastTrialExportAt');
   const isMock = Boolean(conn.metadata?.mock);
 
   return (
@@ -154,7 +160,7 @@ export default function ConnectionDetailPage() {
         <Field label={t('tokenExpires')} value={formatDate(conn.token_expires_at, locale)} />
         <Field label={t('detail.createdAt')} value={formatDate(conn.created_at, locale)} />
         {lastPullAt && (
-          <Field label={t('detail.lastPullAt')} value={formatDate(lastPullAt, locale)} />
+          <Field label={lastPullAtLabel} value={formatDate(lastPullAt, locale)} />
         )}
       </div>
 
@@ -177,11 +183,12 @@ export default function ConnectionDetailPage() {
 
       {pullCounts && (
         <section className="card p-5 text-sm space-y-3">
-          <h2 className="text-lg font-semibold">{t('detail.pullCounts')}</h2>
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+          <h2 className="text-lg font-semibold">{pullCountsTitle}</h2>
+          <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
             <CountField label={t('detail.pullPipelines')} value={pullCounts.pipelines} />
             <CountField label={t('detail.pullStages')} value={pullCounts.stages} />
             <CountField label={t('detail.pullUsers')} value={pullCounts.users} />
+            <CountField label={t('detail.pullCompanies')} value={pullCounts.companies} />
             <CountField label={t('detail.pullContacts')} value={pullCounts.contacts} />
             <CountField label={t('detail.pullDeals')} value={pullCounts.deals} />
           </div>

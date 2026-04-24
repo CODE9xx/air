@@ -34,6 +34,27 @@ def test_build_export_zip_trial_true_calls_trial_export():
     assert result == {"rows_exported": 100}
 
 
+def test_build_export_zip_legacy_mode_trial_calls_trial_export():
+    """Legacy jobs may have payload {"mode": "trial"} from pre-#52.5 UI code.
+
+    build_export_zip must tolerate that payload so old RQ jobs can be retried
+    instead of failing before mark_job_failed can update public.jobs.
+    """
+    from worker.jobs import export as mod
+
+    with patch.object(mod, "trial_export", return_value={"rows_exported": 100}) as mt, \
+         patch.object(mod, "full_export", return_value={"rows_exported": 0}) as mf:
+        result = mod.build_export_zip(
+            connection_id="conn-id-42",
+            mode="trial",
+            job_row_id="row-1",
+        )
+
+    mt.assert_called_once_with(connection_id="conn-id-42", job_row_id="row-1")
+    mf.assert_not_called()
+    assert result == {"rows_exported": 100}
+
+
 def test_build_export_zip_trial_false_calls_full_export():
     from worker.jobs import export as mod
 

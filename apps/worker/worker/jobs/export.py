@@ -8,6 +8,7 @@ contacts/deals — чтобы FE/QA мог увидеть дашборды на 
 """
 from __future__ import annotations
 
+import json
 import random
 import time
 import uuid
@@ -74,6 +75,32 @@ def _get_tenant_schema(connection_id: str) -> str:
 
 def _uuid() -> str:
     return str(uuid.uuid4())
+
+
+def _persist_trial_export_metadata(
+    connection_id: str,
+    *,
+    counts: dict[str, int],
+) -> None:
+    """Persist trial-export visibility metadata for cabinet UI.
+
+    Trial export writes deterministic tenant data, but it is not the same event
+    as amoCRM core pull. Keep a separate metadata key so the UI can show that
+    the 100-deal sample is available without pretending it was a live CRM sync.
+    """
+    meta_patch = {
+        "last_trial_export_at": datetime.now(timezone.utc).isoformat(),
+        "last_trial_export_counts": counts,
+    }
+    with sync_session() as sess:
+        sess.execute(
+            text(
+                "UPDATE crm_connections "
+                "SET metadata = COALESCE(metadata, '{}'::jsonb) || CAST(:patch AS JSONB) "
+                "WHERE id = CAST(:cid AS UUID)"
+            ),
+            {"cid": connection_id, "patch": json.dumps(meta_patch, ensure_ascii=False)},
+        )
 
 
 def trial_export(
@@ -284,6 +311,17 @@ def trial_export(
             "stages_created": len(stage_pool),
             "crm_users_created": len(user_ids),
         }
+        _persist_trial_export_metadata(
+            connection_id,
+            counts={
+                "pipelines": len(pipeline_ids),
+                "stages": len(stage_pool),
+                "users": len(user_ids),
+                "companies": 30,
+                "contacts": 150,
+                "deals": 100,
+            },
+        )
         mark_job_succeeded(job_row_id, result)
         return result
     except Exception as exc:
@@ -323,6 +361,7 @@ def build_export_zip(
     *,
     job_row_id: str | None = None,
     trial: bool = False,
+    mode: str | None = None,
 ) -> dict[str, Any]:
     """
     Router-dispatcher для export jobs (JobKind.BUILD_EXPORT_ZIP).
@@ -342,6 +381,6 @@ def build_export_zip(
     Оба бранча совместимы с существующим ``JobKind.BUILD_EXPORT_ZIP`` —
     отдельный kind/миграция для trial не нужны.
     """
-    if trial:
+    if trial or mode == "trial":
         return trial_export(connection_id=connection_id, job_row_id=job_row_id)
     return full_export(connection_id=connection_id, job_row_id=job_row_id)

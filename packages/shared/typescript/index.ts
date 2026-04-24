@@ -56,6 +56,16 @@ export interface CrmConnectionMetadata {
     pipelines?: number;
     stages?: number;
     users?: number;
+    companies?: number;
+    contacts?: number;
+    deals?: number;
+  };
+  last_trial_export_at?: string | null;
+  last_trial_export_counts?: {
+    pipelines?: number;
+    stages?: number;
+    users?: number;
+    companies?: number;
     contacts?: number;
     deals?: number;
   };

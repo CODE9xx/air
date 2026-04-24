@@ -246,10 +246,13 @@
         "amoId": "Account ID",
         "amoCountry": "Country",
         "amoCurrency": "Currency",
+        "lastTrialExportAt": "Last trial export",
         "pullCounts": "Initial pull counts",
+        "trialExportCounts": "Trial export counts",
         "pullPipelines": "Pipelines",
         "pullStages": "Stages",
         "pullUsers": "Users",
+        "pullCompanies": "Companies",
         "pullContacts": "Contacts",
         "pullDeals": "Deals"
       },
