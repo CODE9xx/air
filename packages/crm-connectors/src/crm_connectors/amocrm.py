@@ -41,6 +41,7 @@ Security:
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import os
 import time
 from typing import Any, Iterable, Optional
 from urllib.parse import urlencode
@@ -76,6 +77,7 @@ _V1_NOT_IMPLEMENTED_MSG = (
 _EXPIRY_SAFETY_SECONDS = 60
 _PAGINATED_GET_MAX_ATTEMPTS = 4
 _PAGINATED_GET_RETRY_BASE_SECONDS = 1.0
+_DEFAULT_AMOCRM_API_MAX_RPS = 5.0
 
 
 class AmoCrmConnector(CRMConnector):
@@ -91,6 +93,9 @@ class AmoCrmConnector(CRMConnector):
             этапе OAuth-start (до знания аккаунта) — но обязателен на
             ``exchange_code`` и далее.
         http_timeout: таймаут httpx-клиента (сек). 30s достаточно для v4 API.
+        max_requests_per_second: локальный лимит на этот connector instance.
+            По умолчанию берётся AMOCRM_API_MAX_RPS или 5 rps, что ниже
+            официального лимита 7 rps на одну интеграцию.
     """
 
     provider: Provider = Provider.AMOCRM
@@ -102,13 +107,54 @@ class AmoCrmConnector(CRMConnector):
         client_secret: str | None = None,
         http_timeout: float = 30.0,
         subdomain: str | None = None,
+        max_requests_per_second: float | None = None,
     ) -> None:
         self._client_id = client_id
         self._client_secret = client_secret
         self._http_timeout = http_timeout
         self._subdomain = subdomain
+        self._max_requests_per_second = self._resolve_max_requests_per_second(
+            max_requests_per_second
+        )
+        self._last_request_monotonic = 0.0
 
     # ----- helpers ------------------------------------------------------------
+
+    @staticmethod
+    def _resolve_max_requests_per_second(value: float | None) -> float:
+        if value is not None:
+            return max(0.1, float(value))
+        raw = os.getenv("AMOCRM_API_MAX_RPS")
+        if raw:
+            try:
+                return max(0.1, float(raw))
+            except ValueError:
+                return _DEFAULT_AMOCRM_API_MAX_RPS
+        return _DEFAULT_AMOCRM_API_MAX_RPS
+
+    def _throttle_api_request(self) -> None:
+        """Keep one integration below amoCRM's default 7 rps API limit."""
+        if self._max_requests_per_second <= 0:
+            return
+        min_interval = 1.0 / self._max_requests_per_second
+        now = time.monotonic()
+        wait_for = min_interval - (now - self._last_request_monotonic)
+        if wait_for > 0:
+            time.sleep(wait_for)
+        self._last_request_monotonic = time.monotonic()
+
+    @staticmethod
+    def _retry_after_seconds(response: httpx.Response, body: Any, attempt: int) -> float:
+        retry_after = response.headers.get("Retry-After")
+        if retry_after is None and isinstance(body, dict):
+            retry_after = body.get("retry_after")
+        if retry_after is not None:
+            try:
+                return min(60.0, max(1.0, float(retry_after)))
+            except (TypeError, ValueError):
+                pass
+        return min(30.0, _PAGINATED_GET_RETRY_BASE_SECONDS * (2 ** max(0, attempt - 1)))
+
 
     def _token_url(self) -> str:
         """URL для exchange_code / refresh."""
@@ -172,6 +218,7 @@ class AmoCrmConnector(CRMConnector):
         url = self._token_url()
         try:
             with httpx.Client(timeout=self._http_timeout) as client:
+                self._throttle_api_request()
                 response = client.post(
                     url,
                     json=payload,
@@ -316,6 +363,7 @@ class AmoCrmConnector(CRMConnector):
                 last_request_error: httpx.RequestError | None = None
                 for attempt in range(1, _PAGINATED_GET_MAX_ATTEMPTS + 1):
                     try:
+                        self._throttle_api_request()
                         response = client.get(
                             url,
                             params=current_params,
@@ -351,6 +399,16 @@ class AmoCrmConnector(CRMConnector):
                     body: Any = response.json()
                 except ValueError:
                     body = {"text": response.text[:500]}
+
+                if response.status_code == 429 or response.status_code >= 500:
+                    retry_attempts = getattr(self, "_paginated_retry_attempts", 0) + 1
+                    setattr(self, "_paginated_retry_attempts", retry_attempts)
+                    if retry_attempts < _PAGINATED_GET_MAX_ATTEMPTS:
+                        time.sleep(self._retry_after_seconds(response, body, retry_attempts))
+                        continue
+                    setattr(self, "_paginated_retry_attempts", 0)
+                else:
+                    setattr(self, "_paginated_retry_attempts", 0)
 
                 self._raise_for_status(response.status_code, body)
 
@@ -479,6 +537,7 @@ class AmoCrmConnector(CRMConnector):
         url = self._api_url("account")
         try:
             with httpx.Client(timeout=self._http_timeout) as client:
+                self._throttle_api_request()
                 response = client.get(
                     url,
                     headers={

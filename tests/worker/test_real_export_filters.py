@@ -80,6 +80,84 @@ def test_amocrm_paginated_get_retries_transient_request_errors(monkeypatch):
     assert fake_client.calls == 2
 
 
+def test_amocrm_connector_throttles_below_default_api_limit(monkeypatch):
+    from crm_connectors.amocrm import AmoCrmConnector
+
+    now = {"value": 100.0}
+    sleeps: list[float] = []
+
+    def fake_monotonic():
+        return now["value"]
+
+    def fake_sleep(delay):
+        sleeps.append(delay)
+        now["value"] += delay
+
+    monkeypatch.setattr("crm_connectors.amocrm.time.monotonic", fake_monotonic)
+    monkeypatch.setattr("crm_connectors.amocrm.time.sleep", fake_sleep)
+
+    connector = AmoCrmConnector(
+        client_id="cid",
+        client_secret="secret",
+        subdomain="demo",
+        max_requests_per_second=5,
+    )
+
+    connector._throttle_api_request()
+    connector._throttle_api_request()
+
+    assert sleeps == [0.2]
+
+
+def test_amocrm_paginated_get_waits_on_429_retry_after(monkeypatch):
+    from crm_connectors.amocrm import AmoCrmConnector
+
+    class FakeResponse:
+        text = ""
+
+        def __init__(self, status_code, body, headers=None):
+            self.status_code = status_code
+            self._body = body
+            self.headers = headers or {}
+
+        def json(self):
+            return self._body
+
+    class FakeClient:
+        def __init__(self, timeout):
+            self.calls = 0
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def get(self, *args, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                return FakeResponse(429, {"retry_after": 2}, {"Retry-After": "2"})
+            return FakeResponse(200, {"_embedded": {"leads": [{"id": 321}]}, "_links": {}})
+
+    fake_client = FakeClient(timeout=30)
+    sleeps: list[float] = []
+    monkeypatch.setattr("crm_connectors.amocrm.httpx.Client", lambda timeout: fake_client)
+    monkeypatch.setattr("crm_connectors.amocrm.time.sleep", lambda delay: sleeps.append(delay))
+
+    connector = AmoCrmConnector(
+        client_id="cid",
+        client_secret="secret",
+        subdomain="demo",
+        max_requests_per_second=1000,
+    )
+
+    rows = list(connector._paginated_get("leads", "token", items_key="leads"))
+
+    assert rows == [{"id": 321}]
+    assert fake_client.calls == 2
+    assert 2.0 in sleeps
+
+
 def test_pull_amocrm_core_signature_accepts_real_export_filters():
     import inspect
 
