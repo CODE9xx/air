@@ -81,7 +81,7 @@ demo.aicode9.ru {
         }
     }
 
-    @demoNextAssets path /_next/* /favicon.ico /robots.txt /sitemap.xml /amocrm-logo.png /code9-amocrm-marketplace.png
+    @demoNextAssets path /_next/* /favicon.ico /robots.txt /sitemap.xml /amocrm-logo.png /code9-amocrm-marketplace.png /code9-amocrm-marketplace-400x272.png
     handle @demoNextAssets {
         reverse_proxy web:3000 {
             header_up X-Real-IP {remote_host}
