@@ -51,6 +51,10 @@ from app.core.db import get_session
 from app.core.jobs import enqueue, queue_for_kind
 from app.core.redis import get_redis
 from app.core.settings import get_settings
+from app.crm.single_connection import (
+    get_existing_crm_connection,
+    raise_single_crm_conflict,
+)
 from app.db.models import CrmConnection, Job, User, Workspace, WorkspaceMember
 
 router = APIRouter(prefix="/integrations/amocrm/oauth", tags=["integrations"])
@@ -139,8 +143,11 @@ async def oauth_start(
     сам делает `window.location.assign(authorize_url)`.
     """
     ws = await _ensure_member(session, user, workspace_id)
+    existing_conn = await get_existing_crm_connection(session, ws.id)
 
     if settings.mock_crm_mode:
+        if existing_conn is not None:
+            raise_single_crm_conflict(existing_conn)
         shortid = secrets.token_hex(4)
         conn = CrmConnection(
             workspace_id=ws.id,
@@ -207,6 +214,11 @@ async def oauth_start(
     # ---- REAL MODE (Phase 2A) -----------------------------------------------
 
     auth_mode = _auth_mode()
+    if existing_conn is not None and (
+        existing_conn.provider != "amocrm"
+        or existing_conn.status not in {"pending", "failed"}
+    ):
+        raise_single_crm_conflict(existing_conn)
 
     try:
         from crm_connectors.amocrm import AmoCrmConnector  # type: ignore  # noqa: F401
@@ -253,21 +265,37 @@ async def oauth_start(
             },
         )
 
-    # 1) Создаём pending CrmConnection. Токенов ещё нет — они появятся в callback.
-    conn = CrmConnection(
-        workspace_id=ws.id,
-        name=connection_name or "amoCRM",
-        provider="amocrm",
-        status="pending",
-        tenant_schema=None,
-        amocrm_auth_mode=auth_mode,
-        metadata_json={
-            "source": "oauth_start",
-            "mock": False,
-            "amocrm_auth_mode": auth_mode,
-        },
-    )
-    session.add(conn)
+    # 1) Создаём pending CrmConnection или переиспользуем незавершённый
+    # pending/failed amoCRM, чтобы retry не создавал вторую CRM в кабинете.
+    if existing_conn is not None:
+        conn = existing_conn
+        conn.status = "pending"
+        conn.amocrm_auth_mode = auth_mode
+        metadata = dict(conn.metadata_json or {})
+        metadata.update(
+            {
+                "source": "oauth_start",
+                "mock": False,
+                "amocrm_auth_mode": auth_mode,
+                "oauth_retry": True,
+            }
+        )
+        conn.metadata_json = metadata
+    else:
+        conn = CrmConnection(
+            workspace_id=ws.id,
+            name=connection_name or "amoCRM",
+            provider="amocrm",
+            status="pending",
+            tenant_schema=None,
+            amocrm_auth_mode=auth_mode,
+            metadata_json={
+                "source": "oauth_start",
+                "mock": False,
+                "amocrm_auth_mode": auth_mode,
+            },
+        )
+        session.add(conn)
     await session.flush()
 
     # 2) Генерируем state и кладём в Redis связку с workspace/connection/user.
@@ -798,5 +826,3 @@ async def _await_external_credentials(
                 )
                 return None, None
     return None, None
-
-

@@ -40,6 +40,7 @@ class EmailVerificationPurpose(StrEnum):
     EMAIL_VERIFY = "email_verify"
     PASSWORD_RESET = "password_reset"
     CONNECTION_DELETE = "connection_delete"
+    EMAIL_CHANGE = "email_change"
 
 
 class CrmProvider(StrEnum):
@@ -68,7 +69,10 @@ class BillingCurrency(StrEnum):
 class BillingPlan(StrEnum):
     FREE = "free"
     PAYGO = "paygo"
+    START = "start"
     TEAM = "team"
+    PRO = "pro"
+    ENTERPRISE = "enterprise"
 
 
 class BillingProvider(StrEnum):
@@ -90,6 +94,7 @@ class TokenAccountPlan(StrEnum):
     START = "start"
     TEAM = "team"
     PRO = "pro"
+    ENTERPRISE = "enterprise"
 
 
 class TokenLedgerKind(StrEnum):
@@ -130,6 +135,7 @@ class JobKind(StrEnum):
     # сохранения токенов. В enum добавлен отдельным kind'ом, т.к. иначе
     # ck_job_kind CHECK constraint отклоняет INSERT при enqueue (Bug A).
     PULL_AMOCRM_CORE = "pull_amocrm_core"
+    PULL_EMAIL_IMAP = "pull_email_imap"
 
 
 class JobQueue(StrEnum):

@@ -46,6 +46,13 @@ type JobStatus = {
   id: string;
   status: 'queued' | 'running' | 'succeeded' | 'failed' | string;
   error?: string | null;
+  queue_position?: number | null;
+  jobs_ahead?: number | null;
+  queue_length?: number | null;
+  estimated_wait_seconds?: number | null;
+  estimated_duration_seconds?: number | null;
+  estimated_remaining_seconds?: number | null;
+  estimated_records?: number | null;
   result?: {
     progress?: JobProgress;
   } | null;
@@ -101,6 +108,7 @@ export default function ConnectionDetailPage() {
   const [exportJobId, setExportJobId] = useState<string | null>(null);
   const [exportJobStatus, setExportJobStatus] = useState<string | null>(null);
   const [exportJobProgress, setExportJobProgress] = useState<JobProgress | null>(null);
+  const [exportJobMeta, setExportJobMeta] = useState<JobStatus | null>(null);
   const [activeJobKind, setActiveJobKind] = useState<'export' | 'sync' | null>(null);
   const [exportRunning, setExportRunning] = useState(false);
   const [syncRunning, setSyncRunning] = useState(false);
@@ -265,7 +273,9 @@ export default function ConnectionDetailPage() {
       if (!quote.can_start) {
         toast({
           kind: 'warning',
-          title: `Не хватает ${quote.missing_tokens.toLocaleString()} AIC9-токенов`,
+          title: connectionDetailText(locale, 'missingTokensToast', {
+            tokens: quote.missing_tokens.toLocaleString(),
+          }),
         });
         setExportRunning(false);
         return;
@@ -281,6 +291,7 @@ export default function ConnectionDetailPage() {
       setExportJobId(res.job_id);
       setExportJobStatus('queued');
       setExportJobProgress(null);
+      setExportJobMeta(null);
       setActiveJobKind('export');
       toast({ kind: 'success', title: tActions('realExportStarted') });
     } catch {
@@ -297,6 +308,7 @@ export default function ConnectionDetailPage() {
       setExportJobId(res.job_id);
       setExportJobStatus('queued');
       setExportJobProgress(null);
+      setExportJobMeta(null);
       setActiveJobKind('sync');
       toast({ kind: 'success', title: tActions('syncStarted') });
     } catch (error) {
@@ -316,6 +328,7 @@ export default function ConnectionDetailPage() {
         const job = await api.get<JobStatus>(`/jobs/${exportJobId}`);
         setExportJobStatus(job.status);
         setExportJobProgress(job.result?.progress ?? null);
+        setExportJobMeta(job);
         if (job.status === 'succeeded') {
           window.clearInterval(timer);
           setExportRunning(false);
@@ -442,6 +455,21 @@ export default function ConnectionDetailPage() {
             <CountField label={t('detail.pullCompanies')} value={pullCounts.companies} />
             <CountField label={t('detail.pullContacts')} value={pullCounts.contacts} />
             <CountField label={t('detail.pullDeals')} value={pullCounts.deals} />
+            {'tasks' in pullCounts && <CountField label={formatProgressCountLabel('tasks', locale)} value={Number(pullCounts.tasks ?? 0)} />}
+            {'notes' in pullCounts && <CountField label={formatProgressCountLabel('notes', locale)} value={Number(pullCounts.notes ?? 0)} />}
+            {'calls' in pullCounts && <CountField label={formatProgressCountLabel('calls', locale)} value={Number(pullCounts.calls ?? 0)} />}
+            {'chats' in pullCounts && <CountField label={formatProgressCountLabel('chats', locale)} value={Number(pullCounts.chats ?? 0)} />}
+            {'messages' in pullCounts && <CountField label={formatProgressCountLabel('messages', locale)} value={Number(pullCounts.messages ?? 0)} />}
+            {'events' in pullCounts && <CountField label={formatProgressCountLabel('events', locale)} value={Number(pullCounts.events ?? 0)} />}
+            {'tags' in pullCounts && <CountField label={formatProgressCountLabel('tags', locale)} value={Number(pullCounts.tags ?? 0)} />}
+            {'products' in pullCounts && <CountField label={formatProgressCountLabel('products', locale)} value={Number(pullCounts.products ?? 0)} />}
+            {'deal_products' in pullCounts && <CountField label={formatProgressCountLabel('deal_products', locale)} value={Number(pullCounts.deal_products ?? 0)} />}
+            {'deal_contacts' in pullCounts && <CountField label={formatProgressCountLabel('deal_contacts', locale)} value={Number(pullCounts.deal_contacts ?? 0)} />}
+            {'deal_companies' in pullCounts && <CountField label={formatProgressCountLabel('deal_companies', locale)} value={Number(pullCounts.deal_companies ?? 0)} />}
+            {'stage_transitions' in pullCounts && <CountField label={formatProgressCountLabel('stage_transitions', locale)} value={Number(pullCounts.stage_transitions ?? 0)} />}
+            {'deal_sources' in pullCounts && <CountField label={formatProgressCountLabel('deal_sources', locale)} value={Number(pullCounts.deal_sources ?? 0)} />}
+            {'custom_fields' in pullCounts && <CountField label={formatProgressCountLabel('custom_fields', locale)} value={Number(pullCounts.custom_fields ?? 0)} />}
+            {'custom_field_values' in pullCounts && <CountField label={formatProgressCountLabel('custom_field_values', locale)} value={Number(pullCounts.custom_field_values ?? 0)} />}
           </div>
         </section>
       )}
@@ -462,17 +490,22 @@ export default function ConnectionDetailPage() {
               }
             />
           </div>
+          {activeExport.messages_coverage && (
+            <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-xs text-slate-600 dark:border-slate-800 dark:bg-slate-900/60 dark:text-slate-300">
+              {formatMessagesCoverage(activeExport.messages_coverage, locale)}
+            </div>
+          )}
         </section>
       )}
 
       {sync && (
         <section className="card p-5 text-sm space-y-3">
-          <h2 className="text-lg font-semibold">Автообновление данных</h2>
+          <h2 className="text-lg font-semibold">{connectionDetailText(locale, 'autoUpdateTitle')}</h2>
           <div className="grid md:grid-cols-4 gap-4">
-            <Field label="Режим" value="Догрузка изменений" />
-            <Field label="Тариф" value={sync.plan_key ?? 'free'} />
-            <Field label="Частота" value={formatCadence(sync.cadence_seconds)} />
-            <Field label="Следующее обновление" value={formatDate(sync.next_auto_sync_at, locale)} />
+            <Field label={connectionDetailText(locale, 'mode')} value={connectionDetailText(locale, 'incrementalMode')} />
+            <Field label={connectionDetailText(locale, 'plan')} value={sync.plan_key ?? 'free'} />
+            <Field label={connectionDetailText(locale, 'cadence')} value={formatCadence(sync.cadence_seconds, locale)} />
+            <Field label={connectionDetailText(locale, 'nextUpdate')} value={formatDate(sync.next_auto_sync_at, locale)} />
           </div>
         </section>
       )}
@@ -581,12 +614,12 @@ export default function ConnectionDetailPage() {
               </Badge>
             )}
           </div>
-          {exportJobProgress && (
+          {(exportJobProgress || exportJobMeta) && (
             <div className="rounded-md border border-border bg-muted p-3">
               <div className="flex items-center justify-between gap-3 text-sm">
-                <span>Этап: {formatJobStage(exportJobProgress.stage)}</span>
+                <span>{connectionDetailText(locale, 'stage')}: {formatJobStage(exportJobProgress?.stage, locale)}</span>
                 <span className="font-semibold tabular-nums">
-                  {typeof exportJobProgress.percent === 'number'
+                  {typeof exportJobProgress?.percent === 'number'
                     ? `${exportJobProgress.percent}%`
                     : '—'}
                 </span>
@@ -594,9 +627,36 @@ export default function ConnectionDetailPage() {
               <div className="mt-2 h-2 overflow-hidden rounded-full bg-white">
                 <div
                   className="h-full bg-primary transition-all"
-                  style={{ width: `${Math.min(100, Math.max(0, exportJobProgress.percent ?? 0))}%` }}
+                  style={{ width: `${Math.min(100, Math.max(0, exportJobProgress?.percent ?? 0))}%` }}
                 />
               </div>
+              <div className="mt-3 grid gap-2 text-xs text-muted-foreground sm:grid-cols-3">
+                {typeof exportJobMeta?.queue_position === 'number' && (
+                  <div>
+                    {connectionDetailText(locale, 'queuePosition')}: <span className="font-medium text-foreground">#{exportJobMeta.queue_position}</span>
+                  </div>
+                )}
+                {typeof exportJobMeta?.estimated_remaining_seconds === 'number' && (
+                  <div>
+                    {connectionDetailText(locale, 'timeLeft')}: <span className="font-medium text-foreground">{formatDuration(exportJobMeta.estimated_remaining_seconds, locale)}</span>
+                  </div>
+                )}
+                {typeof exportJobMeta?.estimated_records === 'number' && (
+                  <div>
+                    {connectionDetailText(locale, 'estimatedRecords')}: <span className="font-medium text-foreground">{exportJobMeta.estimated_records.toLocaleString()}</span>
+                  </div>
+                )}
+              </div>
+              {exportJobProgress?.counts && Object.keys(exportJobProgress.counts).length > 0 && (
+                <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
+                  {Object.entries(exportJobProgress.counts).map(([key, value]) => (
+                    <div key={key} className="rounded-md border border-border bg-white px-2 py-1.5">
+                      <div className="text-[11px] text-muted-foreground">{formatProgressCountLabel(key, locale)}</div>
+                      <div className="font-semibold tabular-nums text-foreground">{Number(value || 0).toLocaleString()}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
           <div className="flex flex-wrap gap-2">
@@ -679,17 +739,19 @@ export default function ConnectionDetailPage() {
           {exportQuoteLoading && <Skeleton className="h-24" />}
           {exportQuote && (
             <div className="rounded-md border border-border bg-muted p-3">
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
-                <CountField label="Клиентов в расчёте" value={exportQuote.estimated_contacts} />
-                <CountField label="Нужно токенов" value={exportQuote.estimated_tokens} />
-                <CountField label="Доступно токенов" value={exportQuote.available_tokens} />
-                <CountField label="Не хватает" value={exportQuote.missing_tokens} />
+              <div className="grid grid-cols-2 md:grid-cols-6 gap-3 text-sm">
+                <CountField label={connectionDetailText(locale, 'clientsInQuote')} value={exportQuote.estimated_contacts} />
+                <CountField label={connectionDetailText(locale, 'recordsInQuote')} value={exportQuote.estimated_records} />
+                <CountField label={connectionDetailText(locale, 'estimatedTime')} value={undefined} textValue={formatDuration(exportQuote.estimated_duration_seconds ?? 0, locale)} />
+                <CountField label={connectionDetailText(locale, 'tokensNeeded')} value={exportQuote.estimated_tokens} />
+                <CountField label={connectionDetailText(locale, 'tokensAvailable')} value={exportQuote.available_tokens} />
+                <CountField label={connectionDetailText(locale, 'tokensMissing')} value={exportQuote.missing_tokens} />
               </div>
               <div className="mt-3 flex items-center justify-between gap-3 flex-wrap text-sm">
                 <div className={exportQuote.can_start ? 'text-success' : 'text-danger'}>
                   {exportQuote.can_start
-                    ? 'Токенов хватает, можно запускать выгрузку.'
-                    : `Недостаточно токенов для выгрузки за выбранный период.`}
+                    ? connectionDetailText(locale, 'tokensEnough')
+                    : connectionDetailText(locale, 'tokensNotEnough')}
                 </div>
                 {!exportQuote.can_start && (
                   <Button
@@ -697,7 +759,7 @@ export default function ConnectionDetailPage() {
                     variant="secondary"
                     onClick={() => router.push(`/${locale}/app/connections/${conn.id}/billing`)}
                   >
-                    Пополнить баланс
+                    {connectionDetailText(locale, 'topUpBalance')}
                   </Button>
                 )}
               </div>
@@ -733,9 +795,6 @@ export default function ConnectionDetailPage() {
         <Button variant="secondary" onClick={doPause}>
           {conn.status === 'paused' ? tActions('resume') : tActions('pause')}
         </Button>
-        <Link href={`/${locale}/app/connections/${conn.id}/dashboard`} className="btn-secondary">
-          {tActions('viewDashboard')}
-        </Link>
         <Link href={`/${locale}/app/connections/${conn.id}/billing`} className="btn-secondary">
           {tActions('billing')}
         </Link>
@@ -759,12 +818,12 @@ function Field({ label, value }: { label: string; value: string }) {
   );
 }
 
-function CountField({ label, value }: { label: string; value: number | undefined }) {
+function CountField({ label, value, textValue }: { label: string; value: number | undefined; textValue?: string }) {
   return (
     <div>
       <div className="text-xs text-muted-foreground">{label}</div>
       <div className="mt-1 font-semibold text-lg tabular-nums">
-        {typeof value === 'number' ? value.toLocaleString() : '—'}
+        {textValue ?? (typeof value === 'number' ? value.toLocaleString() : '—')}
       </div>
     </div>
   );
@@ -777,22 +836,381 @@ function formatCompactTokens(value: number): string {
   return value.toLocaleString();
 }
 
-function formatCadence(seconds: number | undefined): string {
+function formatDuration(seconds: number, locale: string): string {
+  if (!seconds || seconds < 0) return '—';
+  const minutes = Math.max(1, Math.round(seconds / 60));
+  if (minutes < 60) {
+    if (locale === 'en') return `${minutes} min`;
+    if (locale === 'es') return `${minutes} min`;
+    return `${minutes} мин`;
+  }
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  if (rest === 0) {
+    if (locale === 'en') return `${hours} h`;
+    if (locale === 'es') return `${hours} h`;
+    return `${hours} ч`;
+  }
+  if (locale === 'en') return `${hours} h ${rest} min`;
+  if (locale === 'es') return `${hours} h ${rest} min`;
+  return `${hours} ч ${rest} мин`;
+}
+
+function formatCadence(seconds: number | undefined, locale: string): string {
   if (!seconds) return '—';
+  if (locale === 'en') {
+    if (seconds <= 15 * 60) return 'every 15 minutes';
+    if (seconds <= 60 * 60) return 'hourly';
+    if (seconds <= 24 * 60 * 60) return 'daily';
+    return `every ${Math.round(seconds / 3600)} h`;
+  }
+  if (locale === 'es') {
+    if (seconds <= 15 * 60) return 'cada 15 minutos';
+    if (seconds <= 60 * 60) return 'cada hora';
+    if (seconds <= 24 * 60 * 60) return 'una vez al día';
+    return `cada ${Math.round(seconds / 3600)} h`;
+  }
   if (seconds <= 15 * 60) return 'каждые 15 минут';
   if (seconds <= 60 * 60) return 'каждый час';
   if (seconds <= 24 * 60 * 60) return 'раз в день';
   return `раз в ${Math.round(seconds / 3600)} ч`;
 }
 
-function formatJobStage(stage: string | undefined): string {
-  const labels: Record<string, string> = {
-    pipelines: 'воронки',
-    stages: 'этапы',
-    users: 'пользователи',
-    companies: 'компании',
-    contacts: 'контакты',
-    deals: 'сделки',
+function formatProgressCountLabel(key: string, locale: string): string {
+  const labelsByLocale: Record<string, Record<string, string>> = {
+    ru: {
+      pipelines: 'Воронки',
+      stages: 'Этапы',
+      users: 'Менеджеры',
+      companies: 'Компании',
+      companies_imported: 'Компании сейчас',
+      contacts: 'Контакты',
+      contacts_imported: 'Контакты сейчас',
+      deals: 'Сделки',
+      deals_processed: 'Сделки обработано',
+      deals_imported: 'Сделки сейчас',
+      tags: 'Теги',
+      products: 'Товары/услуги',
+      products_imported: 'Товары сейчас',
+      products_processed: 'Товары обработано',
+      deal_products: 'Товары в сделках',
+      deal_products_linked: 'Связи товаров обновлено',
+      tasks: 'Задачи',
+      tasks_imported: 'Задачи сейчас',
+      tasks_processed: 'Задачи обработано',
+      notes: 'События/notes',
+      notes_imported: 'Notes сейчас',
+      notes_processed: 'Notes обработано',
+      calls: 'Звонки',
+      calls_processed: 'Звонки обработано',
+      chats: 'Чаты',
+      chats_processed: 'Чаты обработано',
+      messages: 'Сообщения',
+      messages_imported: 'Сообщения сейчас',
+      messages_processed: 'Сообщения обработано',
+      messages_chats_seen: 'Чатов найдено',
+      messages_chats_matched: 'Чатов связано',
+      messages_unmatched_chats: 'Чатов без связи',
+      events: 'События',
+      events_imported: 'События сейчас',
+      events_processed: 'События обработано',
+      contacts_scope: 'Контакты в выбранных воронках',
+      selected_deals: 'Сделок в срезе',
+      selected_contacts: 'Контактов в срезе',
+      deal_contacts: 'Связи сделка-контакт',
+      deal_companies: 'Связи сделка-компания',
+      stage_transitions: 'Переходы этапов',
+      stage_transitions_processed: 'Переходы обработано',
+      deal_sources: 'Источники сделок',
+      custom_fields: 'Поля amoCRM',
+      custom_fields_imported: 'Поля сейчас',
+      custom_fields_processed: 'Поля обработано',
+      custom_field_values: 'Значения полей',
+      sources: 'Источники',
+      tasks_enriched: 'Задачи расширенно',
+    },
+    en: {
+      pipelines: 'Pipelines',
+      stages: 'Stages',
+      users: 'Managers',
+      companies: 'Companies',
+      companies_imported: 'Companies now',
+      contacts: 'Contacts',
+      contacts_imported: 'Contacts now',
+      deals: 'Deals',
+      deals_processed: 'Deals processed',
+      deals_imported: 'Deals now',
+      tags: 'Tags',
+      products: 'Products/services',
+      products_imported: 'Products now',
+      products_processed: 'Products processed',
+      deal_products: 'Deal products',
+      deal_products_linked: 'Product links updated',
+      tasks: 'Tasks',
+      tasks_imported: 'Tasks now',
+      tasks_processed: 'Tasks processed',
+      notes: 'Events/notes',
+      notes_imported: 'Notes now',
+      notes_processed: 'Notes processed',
+      calls: 'Calls',
+      calls_processed: 'Calls processed',
+      chats: 'Chats',
+      chats_processed: 'Chats processed',
+      messages: 'Messages',
+      messages_imported: 'Messages now',
+      messages_processed: 'Messages processed',
+      messages_chats_seen: 'Chats seen',
+      messages_chats_matched: 'Chats matched',
+      messages_unmatched_chats: 'Unmatched chats',
+      events: 'Events',
+      events_imported: 'Events now',
+      events_processed: 'Events processed',
+      contacts_scope: 'Contacts in selected pipelines',
+      selected_deals: 'Deals in scope',
+      selected_contacts: 'Contacts in scope',
+      deal_contacts: 'Deal-contact links',
+      deal_companies: 'Deal-company links',
+      stage_transitions: 'Stage transitions',
+      stage_transitions_processed: 'Transitions processed',
+      deal_sources: 'Deal sources',
+      custom_fields: 'amoCRM fields',
+      custom_fields_imported: 'Fields now',
+      custom_fields_processed: 'Fields processed',
+      custom_field_values: 'Field values',
+      sources: 'Sources',
+      tasks_enriched: 'Enriched tasks',
+    },
+    es: {
+      pipelines: 'Embudos',
+      stages: 'Etapas',
+      users: 'Gerentes',
+      companies: 'Compañías',
+      companies_imported: 'Compañías ahora',
+      contacts: 'Contactos',
+      contacts_imported: 'Contactos ahora',
+      deals: 'Deals',
+      deals_processed: 'Deals procesados',
+      deals_imported: 'Deals ahora',
+      tags: 'Etiquetas',
+      products: 'Productos/servicios',
+      products_imported: 'Productos ahora',
+      products_processed: 'Productos procesados',
+      deal_products: 'Productos en deals',
+      deal_products_linked: 'Vínculos actualizados',
+      tasks: 'Tareas',
+      tasks_imported: 'Tareas ahora',
+      tasks_processed: 'Tareas procesadas',
+      notes: 'Eventos/notas',
+      notes_imported: 'Notas ahora',
+      notes_processed: 'Notas procesadas',
+      calls: 'Llamadas',
+      calls_processed: 'Llamadas procesadas',
+      chats: 'Chats',
+      chats_processed: 'Chats procesados',
+      messages: 'Mensajes',
+      messages_imported: 'Mensajes ahora',
+      messages_processed: 'Mensajes procesados',
+      messages_chats_seen: 'Chats encontrados',
+      messages_chats_matched: 'Chats vinculados',
+      messages_unmatched_chats: 'Chats sin vínculo',
+      events: 'Eventos',
+      events_imported: 'Eventos ahora',
+      events_processed: 'Eventos procesados',
+      contacts_scope: 'Contactos en embudos',
+      selected_deals: 'Deals en alcance',
+      selected_contacts: 'Contactos en alcance',
+      deal_contacts: 'Vínculos deal-contacto',
+      deal_companies: 'Vínculos deal-compañía',
+      stage_transitions: 'Transiciones de etapa',
+      stage_transitions_processed: 'Transiciones procesadas',
+      deal_sources: 'Fuentes de deals',
+      custom_fields: 'Campos amoCRM',
+      custom_fields_imported: 'Campos ahora',
+      custom_fields_processed: 'Campos procesados',
+      custom_field_values: 'Valores de campos',
+      sources: 'Fuentes',
+      tasks_enriched: 'Tareas enriquecidas',
+    },
   };
-  return stage ? labels[stage] ?? stage : 'ожидание';
+  const labels = labelsByLocale[locale] ?? labelsByLocale.ru;
+  return labels[key] ?? key;
+}
+
+function formatJobStage(stage: string | undefined, locale: string): string {
+  const labelsByLocale: Record<string, Record<string, string>> = {
+    ru: {
+      pipelines: 'воронки',
+      stages: 'этапы',
+      users: 'пользователи',
+      companies: 'компании',
+      contacts: 'контакты',
+      deals: 'сделки',
+      tasks: 'задачи',
+      tasks_enriched: 'расширенные задачи',
+      contacts_scope: 'контакты среза',
+      custom_fields: 'поля amoCRM',
+      sources: 'источники',
+      products: 'товары/услуги',
+      deal_products: 'товары в сделках',
+      notes: 'события/notes',
+      messages: 'сообщения',
+      events: 'история событий',
+      stage_transitions: 'переходы этапов',
+      waiting: 'ожидание',
+    },
+    en: {
+      pipelines: 'pipelines',
+      stages: 'stages',
+      users: 'users',
+      companies: 'companies',
+      contacts: 'contacts',
+      deals: 'deals',
+      tasks: 'tasks',
+      tasks_enriched: 'enriched tasks',
+      contacts_scope: 'scope contacts',
+      custom_fields: 'amoCRM fields',
+      sources: 'sources',
+      products: 'products/services',
+      deal_products: 'deal products',
+      notes: 'events/notes',
+      messages: 'messages',
+      events: 'event history',
+      stage_transitions: 'stage transitions',
+      waiting: 'waiting',
+    },
+    es: {
+      pipelines: 'embudos',
+      stages: 'etapas',
+      users: 'usuarios',
+      companies: 'compañías',
+      contacts: 'contactos',
+      deals: 'deals',
+      tasks: 'tareas',
+      tasks_enriched: 'tareas enriquecidas',
+      contacts_scope: 'contactos del alcance',
+      custom_fields: 'campos amoCRM',
+      sources: 'fuentes',
+      products: 'productos/servicios',
+      deal_products: 'productos en deals',
+      notes: 'eventos/notas',
+      messages: 'mensajes',
+      events: 'historial de eventos',
+      stage_transitions: 'transiciones de etapa',
+      waiting: 'en espera',
+    },
+  };
+  const labels = labelsByLocale[locale] ?? labelsByLocale.ru;
+  return stage ? labels[stage] ?? stage : labels.waiting;
+}
+
+function formatMessagesCoverage(
+  coverage:
+    | {
+        messages_imported?: number;
+        chats_seen?: number;
+        chats_matched?: number;
+        unmatched_chats?: number;
+        skipped_reason?: string | null;
+      }
+    | undefined,
+  locale: string,
+): string {
+  const imported = Number(coverage?.messages_imported ?? 0).toLocaleString(locale);
+  const seen = Number(coverage?.chats_seen ?? 0).toLocaleString(locale);
+  const matched = Number(coverage?.chats_matched ?? 0).toLocaleString(locale);
+  const unmatched = Number(coverage?.unmatched_chats ?? 0).toLocaleString(locale);
+  const skipped = coverage?.skipped_reason;
+  if (locale === 'en') {
+    return `Messages coverage: imported ${imported}, chats seen ${seen}, matched ${matched}, unmatched ${unmatched}${skipped ? `, skipped: ${skipped}` : ''}.`;
+  }
+  if (locale === 'es') {
+    return `Cobertura de mensajes: importados ${imported}, chats encontrados ${seen}, vinculados ${matched}, sin vínculo ${unmatched}${skipped ? `, omitido: ${skipped}` : ''}.`;
+  }
+  return `Покрытие сообщений: импортировано ${imported}, чатов найдено ${seen}, связано ${matched}, без связи ${unmatched}${skipped ? `, пропущено: ${skipped}` : ''}.`;
+}
+
+const connectionDetailTextMap = {
+  ru: {
+    missingTokensToast: 'Не хватает {tokens} AIC9-токенов',
+    autoUpdateTitle: 'Автообновление данных',
+    mode: 'Режим',
+    incrementalMode: 'Догрузка изменений',
+    plan: 'Тариф',
+    cadence: 'Частота',
+    nextUpdate: 'Следующее обновление',
+    stage: 'Этап',
+    queuePosition: 'Позиция в очереди',
+    timeLeft: 'Примерно осталось',
+    estimatedRecords: 'Оценка записей',
+    clientsInQuote: 'Клиентов в расчёте',
+    recordsInQuote: 'Записей',
+    estimatedTime: 'Время',
+    tokensNeeded: 'Нужно токенов',
+    tokensAvailable: 'Доступно токенов',
+    tokensMissing: 'Не хватает',
+    tokensEnough: 'Токенов хватает, можно запускать выгрузку.',
+    tokensNotEnough: 'Недостаточно токенов для выгрузки за выбранный период.',
+    topUpBalance: 'Пополнить баланс',
+  },
+  en: {
+    missingTokensToast: 'Missing {tokens} AIC9 tokens',
+    autoUpdateTitle: 'Data auto-update',
+    mode: 'Mode',
+    incrementalMode: 'Incremental update',
+    plan: 'Plan',
+    cadence: 'Frequency',
+    nextUpdate: 'Next update',
+    stage: 'Stage',
+    queuePosition: 'Queue position',
+    timeLeft: 'Approx. left',
+    estimatedRecords: 'Estimated records',
+    clientsInQuote: 'Clients in estimate',
+    recordsInQuote: 'Records',
+    estimatedTime: 'Time',
+    tokensNeeded: 'Tokens needed',
+    tokensAvailable: 'Tokens available',
+    tokensMissing: 'Missing',
+    tokensEnough: 'Enough tokens, export can be started.',
+    tokensNotEnough: 'Not enough tokens for export in the selected period.',
+    topUpBalance: 'Top up balance',
+  },
+  es: {
+    missingTokensToast: 'Faltan {tokens} tokens AIC9',
+    autoUpdateTitle: 'Actualización automática de datos',
+    mode: 'Modo',
+    incrementalMode: 'Carga incremental de cambios',
+    plan: 'Plan',
+    cadence: 'Frecuencia',
+    nextUpdate: 'Próxima actualización',
+    stage: 'Etapa',
+    queuePosition: 'Posición en cola',
+    timeLeft: 'Tiempo aprox.',
+    estimatedRecords: 'Registros estimados',
+    clientsInQuote: 'Clientes en el cálculo',
+    recordsInQuote: 'Registros',
+    estimatedTime: 'Tiempo',
+    tokensNeeded: 'Tokens necesarios',
+    tokensAvailable: 'Tokens disponibles',
+    tokensMissing: 'Faltan',
+    tokensEnough: 'Hay tokens suficientes, se puede iniciar la exportación.',
+    tokensNotEnough: 'No hay tokens suficientes para exportar el periodo seleccionado.',
+    topUpBalance: 'Recargar balance',
+  },
+} as const;
+
+type ConnectionDetailTextKey = keyof typeof connectionDetailTextMap.ru;
+
+function connectionDetailText(
+  locale: string,
+  key: ConnectionDetailTextKey,
+  replacements?: Record<string, string>,
+): string {
+  const lang = locale === 'en' || locale === 'es' ? locale : 'ru';
+  let value: string = connectionDetailTextMap[lang][key];
+  if (replacements) {
+    Object.entries(replacements).forEach(([name, replacement]) => {
+      value = value.replace(`{${name}}`, replacement);
+    });
+  }
+  return value;
 }

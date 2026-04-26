@@ -50,6 +50,10 @@ class VerifyEmailWithEmailRequest(BaseModel):
     code: str = Field(min_length=6, max_length=6, pattern=r"^\d{6}$")
 
 
+class VerifyEmailResendRequest(BaseModel):
+    email: EmailStr
+
+
 class PasswordResetRequest(BaseModel):
     email: EmailStr
 
@@ -71,6 +75,15 @@ class PasswordChangeRequest(BaseModel):
     new_password: str = Field(min_length=8, max_length=128)
 
     model_config = {"populate_by_name": True}
+
+
+class EmailChangeRequest(BaseModel):
+    current_password: str = Field(min_length=1, max_length=128)
+    new_email: EmailStr
+
+
+class EmailChangeConfirmRequest(BaseModel):
+    code: str = Field(min_length=6, max_length=6, pattern=r"^\d{6}$")
 
 
 class MeResponse(BaseModel):

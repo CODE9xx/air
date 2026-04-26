@@ -17,8 +17,10 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    Numeric,
     PrimaryKeyConstraint,
     Text,
+    UniqueConstraint,
     text,
 )
 from sqlalchemy.dialects.postgresql import TIMESTAMP
@@ -447,6 +449,167 @@ class DealTag(TenantBase):
 
     __table_args__ = (
         PrimaryKeyConstraint("deal_id", "tag_id", name="pk_deal_tags"),
+    )
+
+
+class DealProduct(TenantBase):
+    __tablename__ = "deal_products"
+
+    deal_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("deals.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    product_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("products.id"),
+        nullable=True,
+    )
+    external_id = Column(Text, nullable=False)
+    catalog_id = Column(Text, nullable=True)
+    quantity = Column(Numeric(18, 4), nullable=True)
+    price_cents = Column(BigInteger, nullable=True)
+    price_id = Column(Text, nullable=True)
+    raw_metadata = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
+    fetched_at = Column(TZ, nullable=False, server_default=now_default())
+
+    __table_args__ = (
+        PrimaryKeyConstraint("deal_id", "external_id", name="pk_deal_products"),
+        Index("ix_deal_products_product", "product_id"),
+        Index("ix_deal_products_catalog", "catalog_id"),
+    )
+
+
+class DealContact(TenantBase):
+    __tablename__ = "deal_contacts"
+
+    deal_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("deals.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    contact_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("contacts.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    is_primary = Column(Boolean, nullable=False, server_default=text("FALSE"))
+    raw_metadata = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
+    fetched_at = Column(TZ, nullable=False, server_default=now_default())
+
+    __table_args__ = (
+        PrimaryKeyConstraint("deal_id", "contact_id", name="pk_deal_contacts"),
+        Index("ix_deal_contacts_contact", "contact_id"),
+    )
+
+
+class DealCompany(TenantBase):
+    __tablename__ = "deal_companies"
+
+    deal_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("deals.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    company_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("companies.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    is_primary = Column(Boolean, nullable=False, server_default=text("FALSE"))
+    raw_metadata = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
+    fetched_at = Column(TZ, nullable=False, server_default=now_default())
+
+    __table_args__ = (
+        PrimaryKeyConstraint("deal_id", "company_id", name="pk_deal_companies"),
+        Index("ix_deal_companies_company", "company_id"),
+    )
+
+
+class DealStageTransition(TenantBase):
+    __tablename__ = "deal_stage_transitions"
+
+    id = uuid_pk()
+    deal_id = Column(UUID(as_uuid=True), ForeignKey("deals.id", ondelete="CASCADE"), nullable=False)
+    event_external_id = Column(Text, nullable=False, unique=True)
+    from_stage_id = Column(UUID(as_uuid=True), ForeignKey("stages.id"), nullable=True)
+    to_stage_id = Column(UUID(as_uuid=True), ForeignKey("stages.id"), nullable=True)
+    changed_by_user_id = Column(UUID(as_uuid=True), ForeignKey("crm_users.id"), nullable=True)
+    changed_at_external = Column(TZ, nullable=True)
+    raw_metadata = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
+    fetched_at = Column(TZ, nullable=False, server_default=now_default())
+
+    __table_args__ = (
+        Index("ix_deal_stage_transitions_deal_time", "deal_id", "changed_at_external"),
+        Index("ix_deal_stage_transitions_to_stage", "to_stage_id"),
+    )
+
+
+class DealSource(TenantBase):
+    __tablename__ = "deal_sources"
+
+    deal_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("deals.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    source_name = Column(Text, nullable=True)
+    source_type = Column(Text, nullable=True)
+    utm_source = Column(Text, nullable=True)
+    utm_medium = Column(Text, nullable=True)
+    utm_campaign = Column(Text, nullable=True)
+    utm_content = Column(Text, nullable=True)
+    utm_term = Column(Text, nullable=True)
+    raw_metadata = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
+    fetched_at = Column(TZ, nullable=False, server_default=now_default())
+
+    __table_args__ = (
+        PrimaryKeyConstraint("deal_id", name="pk_deal_sources"),
+        Index("ix_deal_sources_source", "source_name"),
+        Index("ix_deal_sources_utm", "utm_source", "utm_medium", "utm_campaign"),
+    )
+
+
+class CrmCustomField(TenantBase):
+    __tablename__ = "crm_custom_fields"
+
+    id = uuid_pk()
+    entity_type = Column(Text, nullable=False)
+    external_id = Column(Text, nullable=False)
+    name = Column(Text, nullable=True)
+    code = Column(Text, nullable=True)
+    field_type = Column(Text, nullable=True)
+    raw_metadata = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
+    fetched_at = Column(TZ, nullable=False, server_default=now_default())
+
+    __table_args__ = (
+        UniqueConstraint("entity_type", "external_id", name="uq_crm_custom_fields_entity_external"),
+        Index("ix_crm_custom_fields_entity", "entity_type"),
+    )
+
+
+class CrmCustomFieldValue(TenantBase):
+    __tablename__ = "crm_custom_field_values"
+
+    id = uuid_pk()
+    entity_type = Column(Text, nullable=False)
+    entity_external_id = Column(Text, nullable=False)
+    custom_field_id = Column(UUID(as_uuid=True), ForeignKey("crm_custom_fields.id"), nullable=True)
+    field_external_id = Column(Text, nullable=False)
+    field_name = Column(Text, nullable=True)
+    value_text = Column(Text, nullable=True)
+    value_json = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
+    fetched_at = Column(TZ, nullable=False, server_default=now_default())
+
+    __table_args__ = (
+        UniqueConstraint(
+            "entity_type",
+            "entity_external_id",
+            "field_external_id",
+            name="uq_crm_custom_field_values_entity_field",
+        ),
+        Index("ix_crm_custom_field_values_field", "custom_field_id"),
+        Index("ix_crm_custom_field_values_entity", "entity_type", "entity_external_id"),
     )
 
 

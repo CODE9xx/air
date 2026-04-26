@@ -23,9 +23,11 @@ from .base import (
     RawCompany,
     RawContact,
     RawDeal,
+    RawEvent,
     RawMessage,
     RawNote,
     RawPipeline,
+    RawProduct,
     RawStage,
     RawTask,
     RawUser,
@@ -438,6 +440,44 @@ class MockCRMConnector(CRMConnector):
                 created_at=_ts(n.get("created_at")),
                 raw_payload=n,
             )
+
+    def fetch_events(
+        self,
+        access_token: str,
+        since: Optional[datetime] = None,
+        limit: Optional[int] = None,
+    ) -> Iterable[RawEvent]:
+        raw = [
+            {
+                "id": f"mock-event-{n['id']}",
+                "entity_type": "lead",
+                "entity_id": n.get("deal_id"),
+                "type": "note_added",
+                "created_by": n.get("author_user_id"),
+                "created_at": n.get("created_at"),
+                "payload": n,
+            }
+            for n in self._get("amo_notes.json")
+        ]
+        raw = self._filter_since(raw, since, "created_at")
+        for e in self._paginate(raw, limit):
+            yield RawEvent(
+                crm_id=str(e["id"]),
+                entity_type=e.get("entity_type"),
+                entity_id=str(e["entity_id"]) if e.get("entity_id") else None,
+                event_type=e.get("type"),
+                created_by=str(e["created_by"]) if e.get("created_by") else None,
+                created_at=_ts(e.get("created_at")),
+                raw_payload=e,
+            )
+
+    def fetch_products(
+        self,
+        access_token: str,
+        since: Optional[datetime] = None,
+        limit: Optional[int] = None,
+    ) -> Iterable[RawProduct]:
+        return iter(())
 
 
 __all__ = ["MockCRMConnector"]

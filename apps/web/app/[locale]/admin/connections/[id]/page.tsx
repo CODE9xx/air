@@ -18,7 +18,7 @@ export default function AdminConnectionDetailPage() {
     if (!params?.id) return;
     (async () => {
       try {
-        const res = await api.get<CrmConnection>(`/crm/connections/${params.id}`, { scope: 'admin' });
+        const res = await api.get<CrmConnection>(`/admin/connections/${params.id}`, { scope: 'admin' });
         setConn(res);
       } catch {
         setConn(null);

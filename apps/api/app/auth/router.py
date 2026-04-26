@@ -13,6 +13,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import get_current_user
 from app.auth.schemas import (
+    EmailChangeConfirmRequest,
+    EmailChangeRequest,
     LoginRequest,
     LoginResponse,
     MeResponse,
@@ -24,6 +26,7 @@ from app.auth.schemas import (
     RegisterResponse,
     UserBrief,
     VerifyEmailConfirmRequest,
+    VerifyEmailResendRequest,
     VerifyEmailWithEmailRequest,
 )
 from app.core.db import get_session
@@ -335,6 +338,37 @@ async def verify_email_request(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
+@router.post(
+    "/verify-email/resend",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def verify_email_resend(
+    body: VerifyEmailResendRequest,
+    session: AsyncSession = Depends(get_session),
+) -> Response:
+    email = str(body.email).lower().strip()
+    await check_rate("auth_verify_resend_email", email, limit=3, window_seconds=600)
+
+    user = (
+        await session.execute(select(User).where(User.email == email))
+    ).scalar_one_or_none()
+    # Анти-энумерация: для неизвестной или уже подтверждённой почты всегда 204.
+    if not user or user.email_verified_at is not None:
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+    code = generate_email_code()
+    evc = EmailVerificationCode(
+        user_id=user.id,
+        purpose="email_verify",
+        code_hash=hash_secret(code),
+        expires_at=_now() + timedelta(minutes=15),
+    )
+    session.add(evc)
+    await session.commit()
+    send_verification_code(user.email, code, "email_verify")
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
 @router.post("/verify-email/confirm")
 async def verify_email_confirm(
     body: VerifyEmailConfirmRequest,
@@ -566,6 +600,138 @@ async def password_change(
 
     await session.commit()
     return {"ok": True}
+
+
+# -------------------- Email change --------------------
+
+@router.post("/email-change/request", status_code=status.HTTP_204_NO_CONTENT)
+async def email_change_request(
+    body: EmailChangeRequest,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> Response:
+    await check_rate("auth_email_change_req", str(user.id), limit=3, window_seconds=600)
+    new_email = str(body.new_email).lower().strip()
+    current_email = str(user.email).lower().strip()
+    if not verify_secret(user.password_hash, body.current_password):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"error": {"code": "invalid_credentials", "message": "Wrong password"}},
+        )
+    if new_email == current_email:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"error": {"code": "same_email", "message": "New email matches current email"}},
+        )
+    existing = (
+        await session.execute(select(User).where(User.email == new_email))
+    ).scalar_one_or_none()
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"error": {"code": "conflict", "message": "Email already registered"}},
+        )
+
+    code = generate_email_code()
+    evc = EmailVerificationCode(
+        user_id=user.id,
+        purpose="email_change",
+        code_hash=hash_secret(code),
+        metadata_json={"new_email": new_email},
+        expires_at=_now() + timedelta(minutes=15),
+    )
+    session.add(evc)
+    await session.commit()
+    send_verification_code(new_email, code, "email_change")
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/email-change/confirm")
+async def email_change_confirm(
+    body: EmailChangeConfirmRequest,
+    request: Request,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    await check_rate("auth_email_change_confirm", str(user.id), limit=10, window_seconds=3600)
+    res = await session.execute(
+        select(EmailVerificationCode)
+        .where(EmailVerificationCode.user_id == user.id)
+        .where(EmailVerificationCode.purpose == "email_change")
+        .where(EmailVerificationCode.consumed_at.is_(None))
+        .order_by(EmailVerificationCode.created_at.desc())
+        .limit(1)
+    )
+    evc = res.scalar_one_or_none()
+    if not evc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"error": {"code": "code_expired", "message": "No active code"}},
+        )
+    if evc.expires_at < _now():
+        evc.consumed_at = _now()
+        await session.commit()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"error": {"code": "code_expired", "message": "Code expired"}},
+        )
+    if evc.attempts >= evc.max_attempts:
+        evc.consumed_at = _now()
+        await session.commit()
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail={"error": {"code": "too_many_attempts", "message": "Too many attempts"}},
+        )
+    evc.attempts += 1
+    if not verify_secret(evc.code_hash, body.code):
+        await session.commit()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"error": {"code": "validation_error", "message": "Invalid code"}},
+        )
+
+    new_email = str((evc.metadata_json or {}).get("new_email") or "").lower().strip()
+    if not new_email:
+        evc.consumed_at = _now()
+        await session.commit()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"error": {"code": "validation_error", "message": "Email change request is invalid"}},
+        )
+    existing = (
+        await session.execute(select(User).where(User.email == new_email).where(User.id != user.id))
+    ).scalar_one_or_none()
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"error": {"code": "conflict", "message": "Email already registered"}},
+        )
+
+    evc.consumed_at = _now()
+    user.email = new_email
+    user.email_verified_at = _now()
+
+    cookie = request.cookies.get(settings.refresh_cookie_name)
+    parsed = split_session_cookie(cookie or "")
+    keep_id: uuid.UUID | None = None
+    if parsed:
+        try:
+            keep_id = uuid.UUID(parsed[0])
+        except Exception:
+            keep_id = None
+    sessions = (
+        await session.execute(
+            select(UserSession)
+            .where(UserSession.user_id == user.id)
+            .where(UserSession.revoked_at.is_(None))
+        )
+    ).scalars().all()
+    for s in sessions:
+        if keep_id is None or s.id != keep_id:
+            s.revoked_at = _now()
+
+    await session.commit()
+    return {"ok": True, "email": user.email}
 
 
 # -------------------- GET /auth/me --------------------

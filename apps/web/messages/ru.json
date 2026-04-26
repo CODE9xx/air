@@ -1,6 +1,6 @@
 {
   "common": {
-    "brand": "Code9 Analytics",
+    "brand": "CODE9 Analytics",
     "tagline": "CRM-аудит, выгрузки и AI-аналитика",
     "loading": "Загрузка",
     "save": "Сохранить",
@@ -22,6 +22,9 @@
     "language": "Язык",
     "russian": "Русский",
     "english": "Английский",
+    "spanish": "Испанский",
+    "themeDark": "Потянуть цепочку: включить темную тему",
+    "themeLight": "Потянуть цепочку: включить светлую тему",
     "required": "Обязательное поле",
     "optional": "Необязательно",
     "comingSoon": "Скоро",
@@ -102,7 +105,7 @@
   "auth": {
     "register": {
       "title": "Создать аккаунт",
-      "subtitle": "Получите доступ к Code9 Analytics за 30 секунд",
+      "subtitle": "Получите доступ к CODE9 Analytics за 30 секунд",
       "email": "Email",
       "password": "Пароль",
       "passwordHint": "Минимум 8 символов",
@@ -121,7 +124,7 @@
     },
     "login": {
       "title": "Вход",
-      "subtitle": "Войдите в свой аккаунт Code9 Analytics",
+      "subtitle": "Войдите в свой аккаунт CODE9 Analytics",
       "email": "Email",
       "password": "Пароль",
       "submit": "Войти",
@@ -141,9 +144,13 @@
       "title": "Новый пароль",
       "subtitle": "Введите код из письма и новый пароль",
       "email": "Email",
+      "emailHint": "Если код не пришёл, проверьте email и отправьте код повторно.",
       "code": "Код из письма",
       "newPassword": "Новый пароль",
       "submit": "Сохранить пароль",
+      "resend": "Отправить код повторно",
+      "resending": "Отправляем код…",
+      "resent": "Если такой email существует, новый код отправлен",
       "success": "Пароль обновлён. Войдите с новым паролем."
     },
     "errors": {
@@ -163,12 +170,26 @@
   "cabinet": {
     "sidebar": {
       "dashboard": "Обзор",
-      "analyticsDashboard": "Дашборд",
+      "analyticsDashboard": "Аналитика",
+      "dashboardBuilder": "Дашборд",
       "connections": "Подключения",
       "notifications": "Уведомления",
+      "subscriptions": "Подписки",
+      "balance": "Биллинг",
       "ai": "AI-аналитика",
+      "aiChats": "AI-чаты",
+      "aiActions": "AI-автодействия",
       "knowledgeBase": "База знаний",
-      "settings": "Настройки"
+      "settings": "Настройки",
+      "other": "Прочее",
+      "videoLessons": "Видео-уроки",
+      "help": "Помощь",
+      "tokenBalance": "Баланс AIC9 токены",
+      "currentSubscription": "Текущая подписка",
+      "trialPlan": "Trial / тариф не выбран",
+      "subscriptionUntil": "Действует до",
+      "subscriptionExpired": "Подписка истекла",
+      "reserved": "в резерве"
     },
     "topbar": {
       "workspace": "Рабочее пространство",
@@ -194,6 +215,8 @@
       "title": "Подключения CRM",
       "subtitle": "Все ваши подключения в одном месте",
       "addNew": "Подключить CRM",
+      "openExisting": "Открыть CRM",
+      "addEmail": "Подключить почту",
       "addFirst": "Подключить первую CRM",
       "emptyTitle": "Нет подключений",
       "emptyBody": "Начните с подключения amoCRM — это займёт 2 минуты",
@@ -294,6 +317,16 @@
         "subtitle": "Выберите CRM, которую хотите подключить",
         "amocrm": "amoCRM",
         "amocrmDesc": "Официальный OAuth, данные в read-only",
+        "email": "Почта",
+        "emailDesc": "Gmail, Outlook, Яндекс или IMAP для писем клиентов и базы знаний",
+        "configureEmail": "Настроить почту",
+        "singleCrmBadge": "CRM уже подключена",
+        "singleCrmTitle": "Один кабинет — одно CRM-подключение",
+        "singleCrmBody": "Чтобы данные не смешивались, в этом кабинете можно подключить только одну CRM. Если нужна другая CRM, сначала удалите текущее подключение или создайте отдельный кабинет.",
+        "singleCrmOpen": "Открыть подключение",
+        "singleCrmContinue": "Продолжить подключение",
+        "singleCrmHint": "Повторное подключение CRM отключено для этого кабинета.",
+        "singleCrmConflict": "В этом кабинете уже есть CRM-подключение",
         "kommoDesc": "Подключение скоро будет доступно",
         "bitrixDesc": "Подключение скоро будет доступно",
         "connectOAuth": "Подключить через amoCRM",
@@ -303,9 +336,6 @@
         "oauthError": "Не удалось начать OAuth с amoCRM. Проверьте подключение или попробуйте позже.",
         "externalButtonInstruction": "Ждём установку интеграции в amoCRM",
         "externalButtonHint": "После нажатия «Установить» у вас в amoCRM подключение активируется автоматически.",
-        "externalButtonModeTitle": "Режим подключения: external_button",
-        "externalButtonModeDesc": "amoCRM создаст интеграцию в момент установки и пришлёт client_id/secret на наш webhook. Подключение активируется автоматически — делать ничего дополнительно не нужно.",
-        "externalButtonWebhookLabel": "Webhook amoCRM",
         "externalButtonStepTitle": "Шаг 2: подтвердите установку в amoCRM",
         "externalButtonStepHint": "Нажмите кнопку amoCRM ниже и подтвердите установку. Мы активируем подключение автоматически, когда amoCRM пришлёт webhook.",
         "externalButtonLoading": "Загружаем кнопку amoCRM…",
@@ -364,6 +394,18 @@
       "periodNow": "сейчас",
       "allPipelines": "Все воронки",
       "selectedPipelines": "{count} воронок выбрано",
+      "selectedPipeline": "Выбранная воронка",
+      "analyticsPeriod": "Период аналитики",
+      "analyticsPipeline": "Воронка",
+      "analyticsPipelineHint": "Дашборд считает одну выбранную воронку, а не склеивает все вместе.",
+      "period": {
+        "active_export": "Период выгрузки",
+        "last_30": "30 дней",
+        "last_90": "90 дней",
+        "last_12_months": "12 месяцев",
+        "all_time": "Весь период",
+        "custom": "Свой период"
+      },
       "mockData": "Демо-данные",
       "pipelines": "Воронки",
       "managersCount": "Менеджеры",
@@ -430,6 +472,62 @@
       "refund": "Возврат",
       "adjustment": "Корректировка"
     },
+    "subscriptions": {
+      "title": "Подписки",
+      "subtitle": "Выбор тарифа CODE9 и периода оплаты. Реальные платежи пока выключены.",
+      "safeMode": "Без реальных платежей",
+      "currentPlan": "Текущий тариф",
+      "notSelected": "Не выбран",
+      "includedTokens": "Токенов в тарифе",
+      "availableTokens": "Доступно токенов",
+      "plansTitle": "Тарифы CODE9",
+      "plansBody": "Скидка применяется при выборе 6 или 12 месяцев. Кнопки выбора пока работают как безопасная заглушка.",
+      "popular": "Популярный",
+      "current": "Текущий",
+      "tokens": "Токены",
+      "users": "AI-пользователи",
+      "updates": "Обновление",
+      "calls": "Звонки",
+      "chooseSoon": "Выбрать скоро",
+      "paymentDisabledTitle": "Платежи пока выключены",
+      "paymentDisabledBody": "Это безопасный UI-этап. Реальное списание и покупка тарифа будут включены отдельным GO.",
+      "noteTitle": "Как будет работать позже",
+      "noteBody": "Перед реальной покупкой система покажет тариф, период, сумму, включённые AIC9-токены и условия обновления базы."
+    },
+    "balancePage": {
+      "title": "Дашборд биллинга",
+      "subtitle": "AIC9-токены, расходы на выгрузки, транскрибацию, AI-анализ и история списаний.",
+      "safeMode": "Без реальных оплат",
+      "total": "Всего на балансе",
+      "available": "Доступно",
+      "reserved": "В резерве",
+      "included": "Включено в месяц",
+      "spendDashboardTitle": "Расходы токенов сегодня",
+      "spendDashboardBody": "Разбивка по списаниям из текущей истории токенов. Реальные платежи и новые правила списаний не включены.",
+      "exportSpendToday": "Выгрузка",
+      "transcriptionSpendToday": "Транскрибация",
+      "aiSpendToday": "AI-анализ",
+      "otherSpendToday": "Другие действия",
+      "importDashboardTitle": "Что выгружено из CRM",
+      "importDashboardBody": "Сводка по активным подключениям. Показатели за сегодня помечены как примерные, если backend отдал только общий результат последней выгрузки.",
+      "pipelinesImported": "Воронок",
+      "companiesImported": "Компаний",
+      "contactsImported": "Контактов",
+      "dealsImported": "Сделок",
+      "newDealsToday": "Новых сделок сегодня",
+      "newContactsToday": "Новых контактов сегодня",
+      "topUpsTitle": "Докупка токенов",
+      "topUpsBody": "Пакеты показаны для расчёта. Реальное пополнение пока не запускается.",
+      "topUpSoon": "Пополнить скоро",
+      "topUpDisabledTitle": "Пополнение пока выключено",
+      "topUpDisabledBody": "Реальная оплата и списание будут подключены отдельным GO.",
+      "history": "История токенов",
+      "date": "Дата",
+      "description": "Описание",
+      "tokens": "Токены",
+      "balanceAfter": "Баланс после",
+      "emptyHistory": "Списаний токенов пока нет."
+    },
     "settings": {
       "title": "Настройки",
       "profile": "Профиль",
@@ -445,7 +543,101 @@
       "title": "Уведомления",
       "empty": "Уведомлений нет",
       "markRead": "Отметить прочитанным",
-      "allRead": "Всё прочитано"
+      "allRead": "Всё прочитано",
+      "telegram": {
+        "title": "Подключение Telegram",
+        "subtitle": "Один общий CODE9 bot для статусов, ошибок и баланса проекта.",
+        "connected": "Подключен",
+        "notConnected": "Не подключен",
+        "selected": "Выбран",
+        "notSelected": "Не выбран",
+        "channelToggleTitle": "Получать уведомления в Telegram",
+        "channelToggleBody": "Клиент сам выбирает, включать Telegram, MAX или оба канала сразу.",
+        "commonBotTitle": "Общий CODE9 bot",
+        "commonBotBody": "Откройте общий бот CODE9, нажмите Start, затем проверьте чат и отправьте тестовое сообщение.",
+        "openBot": "Открыть CODE9 bot",
+        "checkChat": "Проверить чат",
+        "sendTest": "Отправить тест",
+        "connectCode": "Код подключения",
+        "chatLinked": "Чат найден",
+        "settingsTitle": "Что отправлять",
+        "safeMode": "Сейчас работает проверка чата и тестовая отправка. Автоматические уведомления, webhook и сохранение настроек будут отдельным этапом.",
+        "genericError": "Не удалось выполнить действие. Попробуйте ещё раз.",
+        "check": {
+          "connectedTitle": "Чат Telegram подключен",
+          "notFoundTitle": "Чат пока не найден",
+          "notFoundBody": "Откройте CODE9 bot, нажмите Start или отправьте код {code}, затем повторите проверку.",
+          "errorTitle": "Не удалось проверить чат"
+        },
+        "test": {
+          "sentTitle": "Тестовое сообщение отправлено",
+          "errorTitle": "Не удалось отправить тест"
+        },
+        "settings": {
+          "integrationErrors": {
+            "title": "Ошибки интеграции",
+            "body": "Проблемы OAuth, токенов, API amoCRM и синхронизации."
+          },
+          "exportStatus": {
+            "title": "Статус выгрузки",
+            "body": "Старт, прогресс, завершение и ошибка выгрузки."
+          },
+          "dailyStats": {
+            "title": "Ежедневная статистика",
+            "body": "Короткая сводка по сделкам, обновлениям и рискам."
+          },
+          "lowTokenBalance": {
+            "title": "Низкий баланс токенов",
+            "body": "Предупреждение, когда AIC9-токенов может не хватить."
+          },
+          "trialOrPlanEnding": {
+            "title": "Окончание trial/тарифа",
+            "body": "Напоминания о завершении тестового периода или подписки."
+          }
+        }
+      },
+      "max": {
+        "title": "Подключение MAX",
+        "subtitle": "Отдельный MAX bot для статусов проекта, ошибок и предупреждений по балансу.",
+        "connected": "Подключен",
+        "notConnected": "Не подключен",
+        "selected": "Выбран",
+        "notSelected": "Не выбран",
+        "channelToggleTitle": "Получать уведомления в MAX",
+        "channelToggleBody": "Клиент сам выбирает, включать MAX, Telegram или оба канала сразу.",
+        "commonBotTitle": "MAX bot CODE9",
+        "commonBotBody": "Откройте MAX bot, подпишитесь или напишите ему. После отдельного включения MAX API здесь заработают проверка чата и тестовая отправка.",
+        "openBot": "Открыть MAX bot",
+        "checkChat": "Проверить чат",
+        "sendTest": "Отправить тест",
+        "settingsTitle": "Что отправлять",
+        "safeMode": "Сейчас это безопасный UI-этап: MAX bot отделён от Telegram. Реальная проверка чата, webhook, хранение токена и отправка сообщений будут отдельным GO.",
+        "checkDisabledTitle": "MAX API пока не подключен",
+        "testDisabledTitle": "Тест MAX пока не отправляется",
+        "disabledBody": "Канал подготовлен в интерфейсе. Для реальной отправки нужно отдельно подключить MAX API и хранение токена.",
+        "settings": {
+          "integrationErrors": {
+            "title": "Ошибки интеграции",
+            "body": "Проблемы OAuth, токенов, API amoCRM и синхронизации."
+          },
+          "exportStatus": {
+            "title": "Статус выгрузки",
+            "body": "Старт, прогресс, завершение и ошибка выгрузки."
+          },
+          "dailyStats": {
+            "title": "Ежедневная статистика",
+            "body": "Короткая сводка по сделкам, обновлениям и рискам."
+          },
+          "lowTokenBalance": {
+            "title": "Низкий баланс токенов",
+            "body": "Предупреждение, когда AIC9-токенов может не хватить."
+          },
+          "trialOrPlanEnding": {
+            "title": "Окончание trial/тарифа",
+            "body": "Напоминания о завершении тестового периода или подписки."
+          }
+        }
+      }
     },
     "ai": {
       "title": "AI-аналитика",
@@ -459,12 +651,42 @@
       "subtitle": "Автоматически извлечённые факты о клиенте из звонков и переписок",
       "addManual": "Добавить вручную",
       "empty": "База пока пуста"
+    },
+    "videoLessons": {
+      "title": "Видео-уроки",
+      "subtitle": "Короткие уроки по подключению CRM, выгрузке данных и работе с дашбордом.",
+      "connectCrm": {
+        "title": "Подключение amoCRM",
+        "body": "OAuth-подключение, проверка аккаунта и статуса интеграции."
+      },
+      "runExport": {
+        "title": "Выгрузка данных",
+        "body": "Выбор периода, воронок и запуск полной выгрузки."
+      },
+      "readDashboard": {
+        "title": "Дашборд",
+        "body": "Фильтры, воронки, менеджеры и базовая аналитика продаж."
+      }
+    },
+    "help": {
+      "title": "Помощь",
+      "subtitle": "Связь с поддержкой CODE9 по вопросам подключения, выгрузки и аналитики.",
+      "supportTitle": "Поддержка проекта",
+      "supportBody": "Если интеграция остановилась, выгрузка упала или баланс токенов заканчивается, напишите в поддержку.",
+      "telegram": {
+        "title": "Telegram",
+        "body": "Открыть чат поддержки"
+      },
+      "email": {
+        "title": "Email",
+        "body": "support@aicode9.ru"
+      }
     }
   },
   "admin": {
     "login": {
       "title": "Админ-панель",
-      "subtitle": "Вход только для сотрудников Code9",
+      "subtitle": "Вход только для сотрудников CODE9",
       "email": "Email",
       "password": "Пароль",
       "submit": "Войти"
@@ -488,11 +710,20 @@
     },
     "workspaces": {
       "title": "Воркспейсы",
+      "subtitle": "Клиенты, их тарифы, баланс токенов, подключения и вход в support-режим.",
       "name": "Название",
       "slug": "Slug",
+      "owner": "Клиент",
       "status": "Статус",
       "plan": "Тариф",
       "connections": "Подключений",
+      "tokens": "AIC9-токены",
+      "reserved": "в резерве",
+      "errors": "ошибок",
+      "lastError": "Последняя ошибка",
+      "actions": "Действия",
+      "enterClient": "Войти",
+      "impersonateError": "Не удалось войти в кабинет клиента",
       "pause": "На паузу",
       "resume": "Возобновить"
     },
@@ -540,6 +771,6 @@
     "terms": "Условия использования",
     "privacy": "Политика конфиденциальности",
     "dpa": "Обработка персональных данных",
-    "copyright": "© {year} Code9 Analytics. Все права защищены."
+    "copyright": "© {year} CODE9 Analytics. Все права защищены."
   }
 }

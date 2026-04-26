@@ -21,7 +21,8 @@
     "class-variance-authority": "0.7.0",
     "tailwind-merge": "2.5.2",
     "lucide-react": "0.441.0",
-    "recharts": "2.12.7"
+    "recharts": "2.12.7",
+    "react-grid-layout": "1.5.0"
   },
   "devDependencies": {
     "@types/node": "20.14.10",

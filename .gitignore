@@ -61,3 +61,6 @@ data/
 # Test artifacts
 coverage/
 .cache/
+
+# Codex/Superpowers local workflow state
+.superpowers/

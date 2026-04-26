@@ -1,9 +1,11 @@
 'use client';
 
 import Link from 'next/link';
-import { useLocale, useTranslations } from 'next-intl';
+import { useLocale } from 'next-intl';
 import { ReactNode } from 'react';
 import { LanguageSwitcher } from '@/components/LanguageSwitcher';
+import { BrandLockup } from '@/components/BrandLockup';
+import { PullChainThemeToggle } from '@/components/PullChainThemeToggle';
 
 // Централизованный layout для страниц регистрации/логина/восстановления.
 export function AuthLayout({ title, subtitle, children, footer }: {
@@ -12,16 +14,17 @@ export function AuthLayout({ title, subtitle, children, footer }: {
   children: ReactNode;
   footer?: ReactNode;
 }) {
-  const tCommon = useTranslations('common');
   const locale = useLocale();
   return (
     <div className="min-h-screen bg-muted flex flex-col">
       <header className="container mx-auto flex items-center justify-between h-14">
-        <Link href={`/${locale}`} className="flex items-center gap-2 font-semibold">
-          <span className="inline-block h-5 w-5 rounded bg-primary" />
-          {tCommon('brand')}
+        <Link href={`/${locale}`} className="flex items-center">
+          <BrandLockup />
         </Link>
-        <LanguageSwitcher />
+        <div className="flex items-center gap-2">
+          <PullChainThemeToggle />
+          <LanguageSwitcher />
+        </div>
       </header>
       <main className="flex-1 container mx-auto flex items-center justify-center py-10">
         <div className="w-full max-w-md bg-white rounded-lg border border-border shadow-soft p-8">

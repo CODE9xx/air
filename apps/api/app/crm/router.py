@@ -17,7 +17,7 @@ from datetime import datetime, time, timedelta, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import and_, func, select, text
+from sqlalchemy import and_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import (
@@ -44,6 +44,7 @@ from app.crm.schemas import (
     JobCreatedResponse,
     PatchConnectionRequest,
 )
+from app.crm.single_connection import ensure_no_existing_crm_connection
 from app.db.models import (
     CrmConnection,
     DeletionRequest,
@@ -89,6 +90,8 @@ _SYNC_CADENCE_SECONDS = {
     "pro": 15 * 60,
     "enterprise": 15 * 60,
 }
+_FULL_EXPORT_MIN_DURATION_SECONDS = 5 * 60
+_FULL_EXPORT_MAX_DURATION_SECONDS = 6 * 60 * 60
 
 
 def _now() -> datetime:
@@ -432,19 +435,7 @@ async def create_mock_amocrm(
     ws: Workspace = Depends(get_current_workspace),
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
-    # Лимит ≤10 amocrm на workspace (исключая deleted).
-    count_row = await session.execute(
-        select(func.count(CrmConnection.id))
-        .where(CrmConnection.workspace_id == ws.id)
-        .where(CrmConnection.provider == "amocrm")
-        .where(CrmConnection.status != "deleted")
-    )
-    count = count_row.scalar() or 0
-    if count >= 10:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail={"error": {"code": "conflict", "message": "amoCRM connections limit reached (10)"}},
-        )
+    await ensure_no_existing_crm_connection(session, ws.id)
 
     shortid = secrets.token_hex(4)
     conn = CrmConnection(
@@ -954,8 +945,36 @@ async def _build_full_export_quote_response(
         available_mtokens=account_state["available_mtokens"],
         cached_deals_count=cached_deals_count,
     )
+    estimated_deals = _safe_int(quote.get("estimated_deals"))
+    estimated_contacts = _safe_int(quote.get("estimated_contacts"))
+    snapshot = (conn.metadata_json or {}).get("token_estimate_snapshot")
+    snapshot_counts = snapshot.get("counts") if isinstance(snapshot, dict) else {}
+    estimated_companies = _safe_int(
+        snapshot_counts.get("companies") if isinstance(snapshot_counts, dict) else 0
+    )
+    estimated_records = max(0, estimated_deals + estimated_contacts + estimated_companies)
+    quote["estimated_records"] = estimated_records
+    quote["estimated_duration_seconds"] = _estimate_export_duration_seconds(
+        estimated_records
+    )
     quote["token_account"] = account_state
     return quote
+
+
+def _estimate_export_duration_seconds(estimated_records: int) -> int:
+    """Conservative UI ETA for amoCRM API + DB upserts.
+
+    This is not a billing value. It only gives the client an understandable
+    range before the worker has real progress. Current worker updates progress
+    by stages, so the running ETA becomes more accurate after the first steps.
+    """
+    if estimated_records <= 0:
+        return 30 * 60
+    # Around 20 imported rows/second including API latency, JSON processing,
+    # upserts, and DB round-trips. Bound it so the UI never promises impossible
+    # precision for tiny or very large accounts.
+    seconds = int(_FULL_EXPORT_MIN_DURATION_SECONDS + (estimated_records / 20))
+    return min(_FULL_EXPORT_MAX_DURATION_SECONDS, max(_FULL_EXPORT_MIN_DURATION_SECONDS, seconds))
 
 
 @router.post("/connections/{connection_id}/full-export/quote")
@@ -1026,6 +1045,13 @@ async def full_export(
         "date_to_iso": body.date_to.isoformat(),
         "pipeline_ids": [str(pid) for pid in body.pipeline_ids],
         "cleanup_trial": True,
+        "export_estimate": {
+            "records": quote.get("estimated_records", 0),
+            "duration_seconds": quote.get("estimated_duration_seconds", 0),
+            "deals": quote.get("estimated_deals", 0),
+            "contacts": quote.get("estimated_contacts", 0),
+            "tokens": quote.get("estimated_tokens", 0),
+        },
     }
     job = Job(
         workspace_id=ws.id,

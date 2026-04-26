@@ -5,6 +5,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import { useLocale, useTranslations } from 'next-intl';
 import { cn } from '@/lib/utils';
 import { useAdminAuth } from '@/components/providers/AuthProvider';
+import { BrandLockup } from '@/components/BrandLockup';
 
 export function AdminSidebar() {
   const t = useTranslations('admin.sidebar');
@@ -32,9 +33,11 @@ export function AdminSidebar() {
 
   return (
     <aside className="w-60 shrink-0 border-r border-border bg-white min-h-screen flex flex-col">
-      <div className="px-4 py-4 font-semibold flex items-center gap-2">
-        <span className="inline-block h-5 w-5 rounded bg-danger" />
-        Admin
+      <div className="px-4 py-4">
+        <BrandLockup />
+        <div className="mt-2 inline-flex rounded-full bg-danger/10 px-2 py-0.5 text-xs font-semibold uppercase tracking-wide text-danger">
+          Admin
+        </div>
       </div>
       <nav className="px-2 py-2 space-y-0.5 flex-1">
         {items.map((i) => {

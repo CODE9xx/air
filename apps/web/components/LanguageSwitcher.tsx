@@ -26,7 +26,7 @@ export function LanguageSwitcher({ className }: { className?: string }) {
 
   return (
     <div className={cn('inline-flex rounded-md border border-border bg-white', className)} aria-label={t('language')}>
-      {locales.map((loc) => (
+      {locales.map((loc, index) => (
         <button
           key={loc}
           type="button"
@@ -34,7 +34,8 @@ export function LanguageSwitcher({ className }: { className?: string }) {
           className={cn(
             'px-2.5 py-1 text-xs font-medium uppercase tracking-wide',
             current === loc ? 'bg-primary text-white' : 'text-muted-foreground hover:text-foreground',
-            loc === locales[0] ? 'rounded-l-md' : 'rounded-r-md',
+            index === 0 && 'rounded-l-md',
+            index === locales.length - 1 && 'rounded-r-md',
           )}
           aria-pressed={current === loc}
         >

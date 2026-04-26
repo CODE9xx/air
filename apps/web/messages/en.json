@@ -1,6 +1,6 @@
 {
   "common": {
-    "brand": "Code9 Analytics",
+    "brand": "CODE9 Analytics",
     "tagline": "CRM audit, exports and AI analytics",
     "loading": "Loading",
     "save": "Save",
@@ -22,6 +22,9 @@
     "language": "Language",
     "russian": "Russian",
     "english": "English",
+    "spanish": "Spanish",
+    "themeDark": "Pull the chain: turn dark mode on",
+    "themeLight": "Pull the chain: turn light mode on",
     "required": "Required",
     "optional": "Optional",
     "comingSoon": "Coming soon",
@@ -102,7 +105,7 @@
   "auth": {
     "register": {
       "title": "Create account",
-      "subtitle": "Get access to Code9 Analytics in 30 seconds",
+      "subtitle": "Get access to CODE9 Analytics in 30 seconds",
       "email": "Email",
       "password": "Password",
       "passwordHint": "At least 8 characters",
@@ -121,7 +124,7 @@
     },
     "login": {
       "title": "Log in",
-      "subtitle": "Sign in to your Code9 Analytics account",
+      "subtitle": "Sign in to your CODE9 Analytics account",
       "email": "Email",
       "password": "Password",
       "submit": "Log in",
@@ -141,9 +144,13 @@
       "title": "New password",
       "subtitle": "Enter the code from email and your new password",
       "email": "Email",
+      "emailHint": "If the code did not arrive, check the email and send the code again.",
       "code": "Code from email",
       "newPassword": "New password",
       "submit": "Save password",
+      "resend": "Resend code",
+      "resending": "Sending code…",
+      "resent": "If the email exists, a new code has been sent",
       "success": "Password updated. Sign in with the new one."
     },
     "errors": {
@@ -163,12 +170,26 @@
   "cabinet": {
     "sidebar": {
       "dashboard": "Overview",
-      "analyticsDashboard": "Dashboard",
+      "analyticsDashboard": "Analytics",
+      "dashboardBuilder": "Dashboard",
       "connections": "Connections",
       "notifications": "Notifications",
+      "subscriptions": "Subscriptions",
+      "balance": "Billing",
       "ai": "AI analytics",
+      "aiChats": "AI chats",
+      "aiActions": "AI auto-actions",
       "knowledgeBase": "Knowledge base",
-      "settings": "Settings"
+      "settings": "Settings",
+      "other": "Other",
+      "videoLessons": "Video lessons",
+      "help": "Help",
+      "tokenBalance": "AIC9 token balance",
+      "currentSubscription": "Current subscription",
+      "trialPlan": "Trial / no plan selected",
+      "subscriptionUntil": "Valid until",
+      "subscriptionExpired": "Subscription expired",
+      "reserved": "reserved"
     },
     "topbar": {
       "workspace": "Workspace",
@@ -194,6 +215,8 @@
       "title": "CRM connections",
       "subtitle": "All your connections in one place",
       "addNew": "Connect CRM",
+      "openExisting": "Open CRM",
+      "addEmail": "Connect email",
       "addFirst": "Connect your first CRM",
       "emptyTitle": "No connections yet",
       "emptyBody": "Start by connecting amoCRM — it takes 2 minutes",
@@ -294,6 +317,16 @@
         "subtitle": "Choose the CRM you want to connect",
         "amocrm": "amoCRM",
         "amocrmDesc": "Official OAuth, data stays read-only",
+        "email": "Email",
+        "emailDesc": "Gmail, Outlook, Yandex or IMAP for client emails and knowledge base",
+        "configureEmail": "Configure email",
+        "singleCrmBadge": "CRM already connected",
+        "singleCrmTitle": "One cabinet, one CRM connection",
+        "singleCrmBody": "To keep data separated, this cabinet supports one CRM connection. To use another CRM, delete the current connection or create a separate cabinet.",
+        "singleCrmOpen": "Open connection",
+        "singleCrmContinue": "Continue connection",
+        "singleCrmHint": "Adding another CRM is disabled for this cabinet.",
+        "singleCrmConflict": "This cabinet already has a CRM connection",
         "kommoDesc": "Connector coming soon",
         "bitrixDesc": "Connector coming soon",
         "connectOAuth": "Connect via amoCRM",
@@ -303,9 +336,6 @@
         "oauthError": "Could not start OAuth with amoCRM. Check your connection or try again later.",
         "externalButtonInstruction": "Waiting for amoCRM integration installation",
         "externalButtonHint": "Once you click 'Install' in amoCRM, your connection will activate automatically.",
-        "externalButtonModeTitle": "Connection mode: external_button",
-        "externalButtonModeDesc": "amoCRM will create the integration on installation and send client_id/secret to our webhook. The connection activates automatically — no extra action needed.",
-        "externalButtonWebhookLabel": "amoCRM webhook",
         "externalButtonStepTitle": "Step 2: confirm installation in amoCRM",
         "externalButtonStepHint": "Click the amoCRM button below and confirm the installation. We activate the connection automatically once amoCRM fires the webhook.",
         "externalButtonLoading": "Loading amoCRM button…",
@@ -364,6 +394,18 @@
       "periodNow": "now",
       "allPipelines": "All pipelines",
       "selectedPipelines": "{count} pipelines selected",
+      "selectedPipeline": "Selected pipeline",
+      "analyticsPeriod": "Analytics period",
+      "analyticsPipeline": "Pipeline",
+      "analyticsPipelineHint": "The dashboard calculates one selected pipeline instead of merging all pipelines.",
+      "period": {
+        "active_export": "Export period",
+        "last_30": "30 days",
+        "last_90": "90 days",
+        "last_12_months": "12 months",
+        "all_time": "All time",
+        "custom": "Custom"
+      },
       "mockData": "Demo data",
       "pipelines": "Pipelines",
       "managersCount": "Managers",
@@ -430,6 +472,62 @@
       "refund": "Refund",
       "adjustment": "Adjustment"
     },
+    "subscriptions": {
+      "title": "Subscriptions",
+      "subtitle": "CODE9 plan and billing period selection. Real payments are disabled for now.",
+      "safeMode": "No real payments",
+      "currentPlan": "Current plan",
+      "notSelected": "Not selected",
+      "includedTokens": "Included tokens",
+      "availableTokens": "Available tokens",
+      "plansTitle": "CODE9 plans",
+      "plansBody": "Discounts apply for 6 or 12 months. Selection buttons are safe placeholders for now.",
+      "popular": "Popular",
+      "current": "Current",
+      "tokens": "Tokens",
+      "users": "AI users",
+      "updates": "Updates",
+      "calls": "Calls",
+      "chooseSoon": "Choose soon",
+      "paymentDisabledTitle": "Payments are disabled",
+      "paymentDisabledBody": "This is a safe UI phase. Real charges and plan purchases require a separate GO.",
+      "noteTitle": "How it will work later",
+      "noteBody": "Before purchase, the system will show plan, period, amount, included AIC9 tokens, and database update rules."
+    },
+    "balancePage": {
+      "title": "Billing dashboard",
+      "subtitle": "AIC9 tokens, export costs, transcription, AI analysis, and charge history.",
+      "safeMode": "No real payments",
+      "total": "Total balance",
+      "available": "Available",
+      "reserved": "Reserved",
+      "included": "Included monthly",
+      "spendDashboardTitle": "Token spend today",
+      "spendDashboardBody": "Breakdown from the current token ledger. Real payments and new charge rules are not enabled.",
+      "exportSpendToday": "Export",
+      "transcriptionSpendToday": "Transcription",
+      "aiSpendToday": "AI analysis",
+      "otherSpendToday": "Other actions",
+      "importDashboardTitle": "Imported from CRM",
+      "importDashboardBody": "Summary by active connections. Today's numbers are approximate when backend exposes only the latest total export result.",
+      "pipelinesImported": "Pipelines",
+      "companiesImported": "Companies",
+      "contactsImported": "Contacts",
+      "dealsImported": "Deals",
+      "newDealsToday": "New deals today",
+      "newContactsToday": "New contacts today",
+      "topUpsTitle": "Token top-ups",
+      "topUpsBody": "Packages are shown for calculation. Real top-up is not active yet.",
+      "topUpSoon": "Top up soon",
+      "topUpDisabledTitle": "Top-up disabled",
+      "topUpDisabledBody": "Real payment and charging will be connected after a separate GO.",
+      "history": "Token history",
+      "date": "Date",
+      "description": "Description",
+      "tokens": "Tokens",
+      "balanceAfter": "Balance after",
+      "emptyHistory": "No token charges yet."
+    },
     "settings": {
       "title": "Settings",
       "profile": "Profile",
@@ -445,7 +543,101 @@
       "title": "Notifications",
       "empty": "No notifications",
       "markRead": "Mark as read",
-      "allRead": "All read"
+      "allRead": "All read",
+      "telegram": {
+        "title": "Telegram connection",
+        "subtitle": "One shared CODE9 bot for project statuses, errors, and balance alerts.",
+        "connected": "Connected",
+        "notConnected": "Not connected",
+        "selected": "Selected",
+        "notSelected": "Not selected",
+        "channelToggleTitle": "Receive notifications in Telegram",
+        "channelToggleBody": "The customer chooses Telegram, MAX, or both channels.",
+        "commonBotTitle": "Shared CODE9 bot",
+        "commonBotBody": "Open the shared CODE9 bot, press Start, then check the chat and send a test message.",
+        "openBot": "Open CODE9 bot",
+        "checkChat": "Check chat",
+        "sendTest": "Send test",
+        "connectCode": "Connection code",
+        "chatLinked": "Chat found",
+        "settingsTitle": "What to send",
+        "safeMode": "Chat check and test sending are active now. Automatic notifications, webhook, and saved settings are a separate step.",
+        "genericError": "Action failed. Try again.",
+        "check": {
+          "connectedTitle": "Telegram chat connected",
+          "notFoundTitle": "Chat not found yet",
+          "notFoundBody": "Open CODE9 bot, press Start or send code {code}, then check again.",
+          "errorTitle": "Could not check chat"
+        },
+        "test": {
+          "sentTitle": "Test message sent",
+          "errorTitle": "Could not send test"
+        },
+        "settings": {
+          "integrationErrors": {
+            "title": "Integration errors",
+            "body": "OAuth, token, amoCRM API, and sync issues."
+          },
+          "exportStatus": {
+            "title": "Export status",
+            "body": "Export start, progress, completion, and errors."
+          },
+          "dailyStats": {
+            "title": "Daily stats",
+            "body": "Short summary for deals, updates, and risks."
+          },
+          "lowTokenBalance": {
+            "title": "Low token balance",
+            "body": "Warning when AIC9 tokens may be insufficient."
+          },
+          "trialOrPlanEnding": {
+            "title": "Trial/plan ending",
+            "body": "Reminders before trial or subscription ends."
+          }
+        }
+      },
+      "max": {
+        "title": "MAX connection",
+        "subtitle": "A separate MAX bot for project statuses, errors, and balance warnings.",
+        "connected": "Connected",
+        "notConnected": "Not connected",
+        "selected": "Selected",
+        "notSelected": "Not selected",
+        "channelToggleTitle": "Receive notifications in MAX",
+        "channelToggleBody": "The customer chooses MAX, Telegram, or both channels.",
+        "commonBotTitle": "CODE9 MAX bot",
+        "commonBotBody": "Open the MAX bot, subscribe or send it a message. After the separate MAX API step, chat check and test sending will work here.",
+        "openBot": "Open MAX bot",
+        "checkChat": "Check chat",
+        "sendTest": "Send test",
+        "settingsTitle": "What to send",
+        "safeMode": "This is a safe UI step: the MAX bot is separate from Telegram. Real chat check, webhook, token storage, and message sending need a separate GO.",
+        "checkDisabledTitle": "MAX API is not connected yet",
+        "testDisabledTitle": "MAX test is not sent yet",
+        "disabledBody": "The channel is prepared in the interface. Real sending requires a separate MAX API and token-storage setup.",
+        "settings": {
+          "integrationErrors": {
+            "title": "Integration errors",
+            "body": "OAuth, token, amoCRM API, and sync issues."
+          },
+          "exportStatus": {
+            "title": "Export status",
+            "body": "Export start, progress, completion, and errors."
+          },
+          "dailyStats": {
+            "title": "Daily stats",
+            "body": "Short summary for deals, updates, and risks."
+          },
+          "lowTokenBalance": {
+            "title": "Low token balance",
+            "body": "Warning when AIC9 tokens may be insufficient."
+          },
+          "trialOrPlanEnding": {
+            "title": "Trial/plan ending",
+            "body": "Reminders before trial or subscription ends."
+          }
+        }
+      }
     },
     "ai": {
       "title": "AI analytics",
@@ -459,6 +651,36 @@
       "subtitle": "Facts automatically extracted from calls and messages",
       "addManual": "Add manually",
       "empty": "Knowledge base is empty"
+    },
+    "videoLessons": {
+      "title": "Video lessons",
+      "subtitle": "Short lessons on CRM connection, data export, and dashboard work.",
+      "connectCrm": {
+        "title": "Connect amoCRM",
+        "body": "OAuth connection, account check, and integration status."
+      },
+      "runExport": {
+        "title": "Data export",
+        "body": "Choose period, pipelines, and start a full export."
+      },
+      "readDashboard": {
+        "title": "Dashboard",
+        "body": "Filters, pipelines, managers, and basic sales analytics."
+      }
+    },
+    "help": {
+      "title": "Help",
+      "subtitle": "Contact CODE9 support for connection, export, and analytics questions.",
+      "supportTitle": "Project support",
+      "supportBody": "If integration stopped, export failed, or token balance is low, contact support.",
+      "telegram": {
+        "title": "Telegram",
+        "body": "Open support chat"
+      },
+      "email": {
+        "title": "Email",
+        "body": "support@aicode9.ru"
+      }
     }
   },
   "admin": {
@@ -488,11 +710,20 @@
     },
     "workspaces": {
       "title": "Workspaces",
+      "subtitle": "Customers, plans, token balances, connections, and support-mode access.",
       "name": "Name",
       "slug": "Slug",
+      "owner": "Customer",
       "status": "Status",
       "plan": "Plan",
       "connections": "Connections",
+      "tokens": "AIC9 tokens",
+      "reserved": "reserved",
+      "errors": "errors",
+      "lastError": "Last error",
+      "actions": "Actions",
+      "enterClient": "Enter",
+      "impersonateError": "Could not enter the customer cabinet",
       "pause": "Pause",
       "resume": "Resume"
     },
@@ -539,7 +770,7 @@
     "legal": "Legal",
     "terms": "Terms of Service",
     "privacy": "Privacy Policy",
-    "dpa": "Data Processing Agreement",
-    "copyright": "© {year} Code9 Analytics. All rights reserved."
+    "dpa": "Personal Data Processing",
+    "copyright": "© {year} CODE9 Analytics. All rights reserved."
   }
 }

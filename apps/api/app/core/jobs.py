@@ -25,6 +25,7 @@ JOB_KIND_TO_QUEUE: dict[str, QueueName] = {
     # Phase 2A: pull_amocrm_core живёт в worker.jobs.crm_pull —
     # см. JOB_KIND_TO_MODULE ниже.
     "pull_amocrm_core": "crm",
+    "pull_email_imap": "crm",
     "build_export_zip": "export",
     "run_audit_report": "audit",
     "analyze_conversation": "ai",
@@ -43,12 +44,14 @@ JOB_KIND_TO_QUEUE: dict[str, QueueName] = {
 # здесь перечисляем исключения — функция лежит не в одноимённом модуле.
 JOB_KIND_TO_MODULE: dict[str, str] = {
     "pull_amocrm_core": "crm_pull",
+    "pull_email_imap": "email_pull",
 }
 
 JOB_KIND_TIMEOUT_SECONDS: dict[str, int] = {
     # Full-period amoCRM pulls can process tens of thousands of deals.
     # RQ default is 180s, which is too small for the real export flow.
     "pull_amocrm_core": 3600,
+    "pull_email_imap": 7200,
 }
 
 

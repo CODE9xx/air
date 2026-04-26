@@ -1,5 +1,5 @@
 """
-Code9 Analytics — точка входа FastAPI.
+CODE9 Analytics — точка входа FastAPI.
 
 Wave 2: подключены роутеры auth/workspaces/crm/dashboards/billing/jobs/ai/admin/notifications.
 """
@@ -24,9 +24,13 @@ from app.crm.external_router import router as crm_external_router
 from app.crm.oauth_router import router as crm_oauth_router
 from app.crm.router import router as crm_router
 from app.crm.router import ws_crm_router
+from app.dashboards.builder import router as dashboard_builder_router
 from app.dashboards.router import router as dashboards_router
+from app.email_connections.router import router as email_router
+from app.email_connections.router import ws_email_router
 from app.jobs.router import router as jobs_router
 from app.notifications.router import router as notifications_router
+from app.telegram.router import router as telegram_router
 from app.users.router import router as users_router
 from app.workspaces.router import router as workspaces_router
 
@@ -34,7 +38,7 @@ settings = get_settings()
 install_log_masker(level=logging.INFO)
 
 app = FastAPI(
-    title="Code9 Analytics API",
+    title="CODE9 Analytics API",
     version="0.2.0",
     description="Backend для подключения amoCRM/Kommo/Bitrix24 и AI-аналитики.",
 )
@@ -162,8 +166,12 @@ app.include_router(crm_router, prefix=API_PREFIX)
 app.include_router(ws_crm_router, prefix=API_PREFIX)  # /workspaces/{ws}/crm/* (#52.4)
 app.include_router(crm_oauth_router, prefix=API_PREFIX)
 app.include_router(crm_external_router, prefix=API_PREFIX)
+app.include_router(email_router, prefix=API_PREFIX)
+app.include_router(ws_email_router, prefix=API_PREFIX)
 app.include_router(billing_router, prefix=API_PREFIX)
 app.include_router(jobs_router, prefix=API_PREFIX)
 app.include_router(dashboards_router, prefix=API_PREFIX)
+app.include_router(dashboard_builder_router, prefix=API_PREFIX)
 app.include_router(ai_router, prefix=API_PREFIX)
+app.include_router(telegram_router, prefix=API_PREFIX)
 app.include_router(admin_router, prefix=API_PREFIX)

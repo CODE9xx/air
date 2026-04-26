@@ -1,0 +1,1714 @@
+<!DOCTYPE html>
+<html lang="ru" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<script>(function(){try{var t=localStorage.getItem('code9-theme')||'dark';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<title>Конструктор тарифа CODE9</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  /* ================== THEME TOKENS ================== */
+  :root,
+  [data-theme="dark"] {
+    --bg: #0b0e14;
+    --bg-alt: #0f131a;
+    --surface: rgba(255,255,255,0.04);
+    --surface-hover: rgba(255,255,255,0.06);
+    --surface-active: rgba(0, 229, 255, 0.08);
+    --text: #ffffff;
+    --text-soft: #c9d3e3;
+    --text-muted: #8892a6;
+    --border: rgba(255, 255, 255, 0.08);
+    --border-soft: rgba(255, 255, 255, 0.12);
+    --border-dashed: rgba(255, 255, 255, 0.15);
+    --accent: #0066ff;
+    --accent-cyan: #00e5ff;
+    --accent-text: var(--accent-cyan);
+    --success: #10ffb8;
+    --success-bg: rgba(16, 255, 184, 0.10);
+    --success-border: rgba(16, 255, 184, 0.25);
+    --warning-bg: rgba(255, 183, 77, 0.10);
+    --warning-border: rgba(255, 183, 77, 0.30);
+    --warning-text: #ffb74d;
+    --badge-bg: rgba(255, 183, 77, 0.14);
+    --badge-text: #ffd089;
+    --toggle-off: rgba(255,255,255,0.15);
+    --page-bg: radial-gradient(1000px 500px at 90% 0%, rgba(0, 229, 255, 0.08), transparent 60%),
+                radial-gradient(800px 400px at 0% 100%, rgba(0, 102, 255, 0.10), transparent 60%),
+                var(--bg);
+    --card-shadow: 0 10px 40px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(0, 229, 255, 0.04);
+    --summary-shadow: 0 20px 50px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(0, 229, 255, 0.05);
+    --btn-glow: 0 0 24px rgba(0, 229, 255, 0.35);
+    --logo-badge-bg: linear-gradient(135deg, #fafafa 0%, #c4c4c4 100%);
+    --logo-badge-text: #0066ff;
+    --logo-badge-shadow: 0 2px 6px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.5), 0 0 18px rgba(0, 229, 255, 0.18);
+    --logo-em: var(--accent-cyan);
+    --hero-grid: linear-gradient(rgba(255,255,255,0.03) 1px, transparent 1px),
+                 linear-gradient(90deg, rgba(255,255,255,0.03) 1px, transparent 1px);
+  }
+  [data-theme="light"] {
+    --bg: #f4f7fb;
+    --bg-alt: #ffffff;
+    --surface: #ffffff;
+    --surface-hover: #fafcff;
+    --surface-active: #f3f8ff;
+    --text: #0f172a;
+    --text-soft: #475569;
+    --text-muted: #64748b;
+    --border: #e4eaf2;
+    --border-soft: #d4e0f2;
+    --border-dashed: #c7d2e3;
+    --accent: #2563eb;
+    --accent-cyan: #0ea5e9;
+    --accent-text: #2563eb;
+    --success: #10b981;
+    --success-bg: #ecfdf5;
+    --success-border: #86efac;
+    --warning-bg: #fff8e6;
+    --warning-border: #f5d785;
+    --warning-text: #d97706;
+    --badge-bg: #fff3d9;
+    --badge-text: #a8742a;
+    --toggle-off: #cbd5e1;
+    --page-bg: #f4f7fb;
+    --card-shadow: 0 4px 24px rgba(15, 23, 42, 0.04);
+    --summary-shadow: 0 4px 24px rgba(15, 23, 42, 0.04);
+    --btn-glow: 0 4px 12px rgba(37, 99, 235, 0.25);
+    --logo-badge-bg: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
+    --logo-badge-text: #ffffff;
+    --logo-badge-shadow: 0 2px 6px rgba(37, 99, 235, 0.25), inset 0 1px 0 rgba(255,255,255,0.2);
+    --logo-em: #2563eb;
+    --hero-grid: none;
+  }
+
+  html { scroll-behavior: smooth; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', Roboto, sans-serif;
+    background: var(--page-bg);
+    color: var(--text);
+    line-height: 1.5;
+    min-height: 100vh;
+    -webkit-font-smoothing: antialiased;
+    transition: background-color 0.25s ease, color 0.25s ease;
+  }
+  .nav, .step, .server-card, .module-card, .token-card,
+  .summary, .included, .analytics-item, .formula-box, .formula-row,
+  .billing-note, .info-note, .pricing-formula {
+    transition: background-color 0.25s ease, border-color 0.25s ease, color 0.25s ease, box-shadow 0.25s ease;
+  }
+  .container { max-width: 1280px; margin: 0 auto; padding: 0 24px; }
+
+  /* ================== NAV ================== */
+  .nav {
+    position: sticky; top: 0; z-index: 50;
+    background: var(--bg);
+    border-bottom: 1px solid var(--border);
+  }
+  [data-theme="dark"] .nav { background: rgba(11, 14, 20, 0.82); backdrop-filter: blur(14px); }
+  [data-theme="light"] .nav { background: rgba(255, 255, 255, 0.92); backdrop-filter: blur(10px); }
+  .nav-inner { display: flex; align-items: center; justify-content: space-between; height: 68px; gap: 20px; }
+
+  .c9-logo { display: inline-flex; align-items: center; gap: 12px; text-decoration: none; }
+  .c9-logo-cube {
+    width: 32px; height: 32px;
+    flex-shrink: 0;
+    display: block;
+    object-fit: contain;
+    filter: drop-shadow(0 2px 6px rgba(0,0,0,0.35)) drop-shadow(0 0 16px rgba(0, 229, 255, 0.15));
+  }
+  [data-theme="light"] .c9-logo-cube { filter: drop-shadow(0 2px 6px rgba(15,23,42,0.2)); }
+  .c9-logo-type { display: flex; flex-direction: column; line-height: 1; position: relative; }
+  .c9-logo-type::before {
+    content: '';
+    position: absolute; inset: -10px -20px;
+    background: radial-gradient(ellipse at center, rgba(0, 229, 255, 0.28) 0%, rgba(0, 229, 255, 0.1) 45%, transparent 75%);
+    filter: blur(6px);
+    z-index: -1;
+    animation: logoBreathe 6s ease-in-out infinite;
+    pointer-events: none;
+  }
+  [data-theme="light"] .c9-logo-type::before {
+    background: radial-gradient(ellipse at center, rgba(37, 99, 235, 0.2) 0%, rgba(37, 99, 235, 0.06) 50%, transparent 75%);
+  }
+  .c9-logo-main {
+    font-weight: 900; font-size: 22px; letter-spacing: -0.01em;
+    color: var(--accent-cyan);
+    text-shadow: 0 0 6px rgba(0, 229, 255, 0.85), 0 0 14px rgba(0, 229, 255, 0.55), 0 0 28px rgba(0, 229, 255, 0.35);
+    animation: logoBreatheText 6s ease-in-out infinite;
+  }
+  [data-theme="light"] .c9-logo-main {
+    color: #2563eb;
+    animation: logoBreatheLight 6s ease-in-out infinite;
+  }
+  .c9-logo-sub {
+    font-weight: 600; font-size: 11px; letter-spacing: 0.28em;
+    margin-top: 4px; color: var(--text);
+  }
+  [data-theme="light"] .c9-logo-sub { color: #0f172a; }
+  @keyframes logoBreathe {
+    0%, 100% { opacity: 0.85; }
+    50% { opacity: 1; }
+  }
+  @keyframes logoBreatheText {
+    0%, 100% { text-shadow: 0 0 6px rgba(0, 229, 255, 0.85), 0 0 14px rgba(0, 229, 255, 0.55), 0 0 28px rgba(0, 229, 255, 0.35); }
+    50% { text-shadow: 0 0 8px rgba(0, 229, 255, 0.95), 0 0 18px rgba(0, 229, 255, 0.7), 0 0 34px rgba(0, 229, 255, 0.45); }
+  }
+  @keyframes logoBreatheLight {
+    0%, 100% { text-shadow: 0 0 6px rgba(37, 99, 235, 0.35), 0 0 14px rgba(37, 99, 235, 0.2); }
+    50% { text-shadow: 0 0 8px rgba(37, 99, 235, 0.5), 0 0 18px rgba(37, 99, 235, 0.3); }
+  }
+
+  .nav-right { display: flex; align-items: center; gap: 16px; }
+  .nav-link {
+    font-size: 14px; color: var(--text-soft); text-decoration: none; font-weight: 500;
+    transition: color 0.15s;
+  }
+  .nav-link:hover { color: var(--accent-text); }
+  .nav-login {
+    color: var(--text-soft);
+    font-size: 14px; font-weight: 500; text-decoration: none;
+    padding: 10px 4px;
+    transition: color 0.15s;
+    white-space: nowrap;
+  }
+  .nav-login:hover { color: var(--accent-cyan); }
+  [data-theme="light"] .nav-login:hover { color: #2563eb; }
+  .nav-register {
+    color: var(--text);
+    border: 1px solid var(--border);
+    background: var(--surface);
+    padding: 9px 16px; border-radius: 10px;
+    font-size: 14px; font-weight: 600; text-decoration: none;
+    transition: all 0.18s;
+    white-space: nowrap;
+  }
+  .nav-register:hover { border-color: var(--accent-cyan); color: var(--accent-cyan); }
+  [data-theme="light"] .nav-register { background: #ffffff; border-color: #e2e8f0; color: #0f172a; }
+  [data-theme="light"] .nav-register:hover { border-color: #2563eb; color: #2563eb; }
+  .nav-demo {
+    display: inline-flex; align-items: center; gap: 6px;
+    color: var(--accent-cyan);
+    border: 1px solid rgba(0, 229, 255, 0.35);
+    background: rgba(0, 229, 255, 0.06);
+    padding: 9px 14px; border-radius: 10px;
+    font-size: 14px; font-weight: 600; text-decoration: none;
+    transition: all 0.18s; white-space: nowrap;
+  }
+  .nav-demo:hover {
+    background: rgba(0, 229, 255, 0.14);
+    border-color: var(--accent-cyan);
+    box-shadow: 0 0 20px rgba(0, 229, 255, 0.3);
+    transform: translateY(-1px);
+  }
+  .nav-demo-dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--accent-cyan);
+    box-shadow: 0 0 8px var(--accent-cyan);
+    animation: pulse 1.6s infinite;
+  }
+  [data-theme="light"] .nav-demo { color: #2563eb; border-color: #bfdbfe; background: #eff6ff; }
+  [data-theme="light"] .nav-demo:hover { background: #dbeafe; border-color: #2563eb; box-shadow: 0 4px 12px rgba(37, 99, 235, 0.18); }
+  [data-theme="light"] .nav-demo-dot { background: #2563eb; box-shadow: 0 0 8px rgba(37, 99, 235, 0.5); }
+  @media (max-width: 800px) {
+    .nav-login, .nav-register { display: none; }
+  }
+
+  /* LAMP PULL CHAIN — lightbulb pendant */
+  .lamp-chain {
+    position: fixed; top: 0; right: 40px; z-index: 100;
+    width: 56px;
+    display: flex; flex-direction: column; align-items: center;
+    cursor: grab;
+    user-select: none; -webkit-user-select: none; touch-action: none;
+  }
+  .lamp-chain.pulling { cursor: grabbing; }
+  .chain-ceiling {
+    width: 28px; height: 6px;
+    background: linear-gradient(180deg, #3a4150 0%, #1c2029 100%);
+    border-radius: 0 0 6px 6px;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.08);
+    flex-shrink: 0;
+  }
+  [data-theme="light"] .chain-ceiling {
+    background: linear-gradient(180deg, #94a3b8 0%, #475569 100%);
+    box-shadow: 0 2px 6px rgba(0,0,0,0.18), inset 0 1px 0 rgba(255,255,255,0.3);
+  }
+  .chain-cord {
+    width: 2px; height: 100px;
+    background: linear-gradient(to bottom, #6b7280 0%, #3a414e 60%, #2a2f3a 100%);
+    box-shadow: 0 0 2px rgba(255,255,255,0.08);
+    transition: height 0.55s cubic-bezier(.34,1.56,.64,1);
+    flex-shrink: 0;
+  }
+  .lamp-chain.pulling .chain-cord { transition: none; }
+  [data-theme="light"] .chain-cord { background: linear-gradient(to bottom, #475569 0%, #334155 60%, #1e293b 100%); }
+  .chain-fixture {
+    display: flex; flex-direction: column; align-items: center;
+    transform-origin: top center;
+    transition: transform 0.55s cubic-bezier(.34,1.56,.64,1);
+  }
+  .lamp-chain.pulling .chain-fixture { transition: none; }
+  .lamp-chain.swing .chain-fixture { animation: bulbSwing 0.95s ease-out; }
+  .chain-socket {
+    width: 14px; height: 10px;
+    background: linear-gradient(180deg, #3a3f4a, #1a1e27);
+    border-radius: 2px 2px 0 0;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.1);
+  }
+  .chain-thread {
+    width: 18px; height: 6px;
+    background: repeating-linear-gradient(90deg, #888 0 2px, #555 2px 4px);
+    border-radius: 1px; margin-top: -1px;
+  }
+  .chain-bulb {
+    width: 42px; height: 52px; margin-top: -2px;
+    background: radial-gradient(ellipse at 50% 35%, rgba(200,210,225,0.2), rgba(120,130,150,0.1) 60%, transparent 100%);
+    border: 1.5px solid rgba(200,210,225,0.35);
+    border-radius: 50% 50% 50% 50% / 55% 55% 45% 45%;
+    position: relative;
+    transition: background 0.35s, border-color 0.35s, box-shadow 0.35s;
+  }
+  .chain-bulb::before {
+    content: '';
+    position: absolute; top: 18px; left: 50%; transform: translateX(-50%);
+    width: 14px; height: 18px;
+    border: 1.5px solid rgba(255, 220, 120, 0.35);
+    border-top: 0; border-radius: 0 0 50% 50%;
+    transition: border-color 0.35s, box-shadow 0.35s;
+  }
+  .lamp-chain.on .chain-bulb {
+    background: radial-gradient(ellipse at 50% 35%, #fff7d6 0%, #ffe066 45%, rgba(255, 200, 50, 0.4) 75%, transparent 100%);
+    border-color: rgba(255, 224, 102, 0.85);
+    box-shadow: 0 0 32px rgba(255, 210, 90, 0.75), 0 0 70px rgba(255, 210, 90, 0.4);
+    animation: bulbGlow 3.2s ease-in-out infinite;
+  }
+  .lamp-chain.on .chain-bulb::before {
+    border-color: #ff9900;
+    box-shadow: 0 0 6px #ffcc66;
+  }
+  @keyframes bulbSwing {
+    0% { transform: rotate(0); }
+    25% { transform: rotate(6deg); }
+    50% { transform: rotate(-4deg); }
+    75% { transform: rotate(2deg); }
+    100% { transform: rotate(0); }
+  }
+  @keyframes bulbGlow {
+    0%, 100% { box-shadow: 0 0 28px rgba(255, 210, 90, 0.7), 0 0 60px rgba(255, 210, 90, 0.35); }
+    50% { box-shadow: 0 0 38px rgba(255, 210, 90, 0.9), 0 0 80px rgba(255, 210, 90, 0.5); }
+  }
+  @media (max-width: 600px) {
+    .lamp-chain { right: 20px; width: 44px; }
+    .chain-cord { height: 84px; }
+    .chain-ceiling { width: 22px; }
+    .chain-bulb { width: 34px; height: 42px; }
+    .chain-bulb::before { top: 14px; width: 12px; height: 14px; }
+  }
+
+  /* LANGUAGE SELECTOR */
+  .lang-select { position: relative; }
+  .lang-btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    height: 40px; padding: 0 12px;
+    border: 1px solid var(--border); background: var(--surface);
+    color: var(--text-soft); border-radius: 10px;
+    font-size: 13px; font-weight: 600; letter-spacing: 0.04em;
+    cursor: pointer; transition: all 0.15s;
+  }
+  .lang-btn:hover { color: var(--accent-cyan); border-color: var(--accent-cyan); }
+  [data-theme="light"] .lang-btn { background: #ffffff; }
+  [data-theme="light"] .lang-btn:hover { color: #2563eb; border-color: #2563eb; }
+  .lang-menu {
+    position: absolute; top: calc(100% + 6px); right: 0;
+    background: var(--surface-solid); border: 1px solid var(--border);
+    border-radius: 10px; padding: 4px; min-width: 140px;
+    box-shadow: 0 18px 40px rgba(0,0,0,0.45);
+    opacity: 0; visibility: hidden; transform: translateY(-4px);
+    transition: opacity 0.15s, transform 0.15s, visibility 0.15s;
+    z-index: 60;
+  }
+  [data-theme="light"] .lang-menu { background: #ffffff; box-shadow: 0 18px 40px rgba(15,23,42,0.14); }
+  .lang-select.open .lang-menu { opacity: 1; visibility: visible; transform: translateY(0); }
+  .lang-item {
+    display: flex; align-items: center; gap: 10px;
+    width: 100%; padding: 9px 12px;
+    background: transparent; border: 0; color: var(--text);
+    font-size: 13.5px; font-weight: 500; text-align: left;
+    border-radius: 7px; cursor: pointer; transition: background 0.12s;
+  }
+  .lang-item:hover { background: var(--surface-hover); }
+  .lang-item.active { color: var(--accent-cyan); font-weight: 700; }
+  [data-theme="light"] .lang-item.active { color: #2563eb; }
+  .lang-flag {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 22px; height: 16px; border-radius: 3px;
+    font-size: 14px; background: var(--border);
+  }
+
+  /* ================== PAGE HEADER ================== */
+  .page-head {
+    padding: 48px 0 32px;
+    position: relative;
+    overflow: hidden;
+  }
+  [data-theme="dark"] .page-head::before {
+    content: '';
+    position: absolute; inset: 0;
+    background-image: var(--hero-grid);
+    background-size: 40px 40px;
+    mask-image: radial-gradient(ellipse 60% 60% at 50% 30%, #000 20%, transparent 80%);
+    pointer-events: none;
+  }
+  .page-head .header-text { position: relative; }
+  .page-head h1 {
+    font-size: 38px; font-weight: 800; letter-spacing: -0.02em; margin-bottom: 10px;
+    color: var(--text);
+  }
+  .page-head h1 em {
+    font-style: normal;
+    background: linear-gradient(135deg, var(--accent), var(--accent-cyan));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+  .page-head p { color: var(--text-muted); font-size: 16px; max-width: 640px; }
+
+  .main-wrap { padding-bottom: 80px; }
+
+  /* ================== PERIOD TOGGLE ================== */
+  .period-toggle {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 3px;
+    gap: 2px;
+    width: 100%;
+    margin-bottom: 16px;
+  }
+  [data-theme="light"] .period-toggle { background: #f4f7fb; }
+  .period-btn {
+    background: transparent;
+    border: none;
+    padding: 9px 8px;
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--text-soft);
+    cursor: pointer;
+    border-radius: 8px;
+    transition: all 0.2s;
+    white-space: nowrap;
+    font-family: inherit;
+    display: flex; align-items: center; justify-content: center; gap: 4px;
+  }
+  .period-btn:hover { color: var(--text); }
+  .period-btn.active {
+    background: linear-gradient(135deg, var(--accent), var(--accent-cyan));
+    color: #fff;
+    box-shadow: var(--btn-glow);
+  }
+  [data-theme="light"] .period-btn.active { background: #2563eb; }
+  .period-btn .discount {
+    font-size: 10px;
+    background: var(--success-bg);
+    color: var(--success);
+    padding: 1px 5px;
+    border-radius: 4px;
+    font-weight: 700;
+  }
+  [data-theme="light"] .period-btn .discount { background: #ecfdf5; color: #047857; }
+  .period-btn.active .discount {
+    background: rgba(255,255,255,0.25);
+    color: #fff;
+  }
+
+  /* ================== LAYOUT ================== */
+  .layout { display: grid; grid-template-columns: 1fr 380px; gap: 24px; align-items: start; }
+  @media (max-width: 1024px) { .layout { grid-template-columns: 1fr; } }
+
+  /* ================== STEPS ================== */
+  .step {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 28px;
+    margin-bottom: 20px;
+    backdrop-filter: blur(8px);
+    box-shadow: var(--card-shadow);
+  }
+  [data-theme="light"] .step { backdrop-filter: none; }
+  .step-header { display: flex; align-items: center; gap: 12px; margin-bottom: 20px; }
+  .step-num {
+    width: 28px; height: 28px;
+    background: rgba(0, 229, 255, 0.12);
+    color: var(--accent-text);
+    border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700;
+    font-size: 14px;
+    box-shadow: 0 0 12px rgba(0, 229, 255, 0.25);
+  }
+  [data-theme="light"] .step-num { background: #eff4fb; box-shadow: none; }
+  .step-title { font-size: 18px; font-weight: 700; letter-spacing: -0.01em; color: var(--text); }
+  .step-desc { color: var(--text-muted); font-size: 14px; margin-top: 4px; }
+
+  /* ================== SERVER GRID ================== */
+  .server-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
+  @media (max-width: 640px) { .server-grid { grid-template-columns: 1fr; } }
+
+  .server-card {
+    background: var(--surface);
+    border: 1.5px solid var(--border);
+    border-radius: 14px;
+    padding: 20px;
+    cursor: pointer;
+    transition: all 0.2s;
+    position: relative;
+  }
+  .server-card:hover {
+    border-color: var(--border-soft);
+    transform: translateY(-2px);
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.2), 0 0 20px rgba(0, 229, 255, 0.08);
+  }
+  [data-theme="light"] .server-card:hover { border-color: #b8cdea; box-shadow: 0 8px 24px rgba(37, 99, 235, 0.10); }
+  .server-card.selected {
+    border-color: var(--accent-cyan);
+    background: var(--surface-active);
+    box-shadow: 0 0 0 3px rgba(0, 229, 255, 0.12), 0 0 30px rgba(0, 229, 255, 0.15);
+  }
+  [data-theme="light"] .server-card.selected {
+    border-color: #2563eb;
+    background: linear-gradient(180deg, #f3f8ff 0%, #ffffff 100%);
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.08);
+  }
+  .server-card.selected::after {
+    content: '✓';
+    position: absolute; top: 14px; right: 14px;
+    width: 22px; height: 22px;
+    background: linear-gradient(135deg, var(--accent), var(--accent-cyan));
+    color: #fff;
+    border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 12px; font-weight: 700;
+    box-shadow: 0 0 10px rgba(0, 229, 255, 0.55);
+  }
+  [data-theme="light"] .server-card.selected::after { background: #2563eb; box-shadow: none; }
+  .server-name { font-size: 16px; font-weight: 700; margin-bottom: 4px; color: var(--text); }
+  .server-price { font-size: 22px; font-weight: 700; color: var(--text); margin-bottom: 14px; letter-spacing: -0.01em; }
+  .server-price small { font-size: 13px; font-weight: 500; color: var(--text-muted); }
+  .server-features { list-style: none; font-size: 13px; color: var(--text-soft); }
+  .server-features li { padding: 4px 0 4px 20px; position: relative; }
+  .server-features li::before {
+    content: '';
+    position: absolute; left: 0; top: 10px;
+    width: 6px; height: 6px;
+    background: var(--accent-cyan);
+    border-radius: 50%;
+    box-shadow: 0 0 8px rgba(0, 229, 255, 0.6);
+  }
+  [data-theme="light"] .server-features li::before { background: #2563eb; box-shadow: none; }
+
+  /* ================== MODULES ================== */
+  .module-list { display: flex; flex-direction: column; gap: 10px; }
+  .module-card {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 16px;
+    padding: 16px 18px;
+    border: 1.5px solid var(--border);
+    border-radius: 12px;
+    cursor: pointer;
+    transition: all 0.18s;
+    background: var(--surface);
+    position: relative;
+  }
+  .module-card:hover {
+    border-color: var(--border-soft);
+    background: var(--surface-hover);
+    transform: translateY(-1px);
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.2), 0 0 16px rgba(0, 229, 255, 0.06);
+  }
+  [data-theme="light"] .module-card:hover { border-color: #b8cdea; box-shadow: 0 4px 14px rgba(37, 99, 235, 0.07); }
+  .module-card.active {
+    border-color: var(--accent-cyan);
+    background: var(--surface-active);
+    box-shadow: 0 0 0 1px rgba(0, 229, 255, 0.08), 0 4px 20px rgba(0, 229, 255, 0.15);
+  }
+  [data-theme="light"] .module-card.active {
+    border-color: #2563eb;
+    background: #f3f8ff;
+    box-shadow: 0 4px 14px rgba(37, 99, 235, 0.10);
+  }
+  .module-card.active::before {
+    content: '';
+    position: absolute; left: 0; top: 14px; bottom: 14px;
+    width: 3px;
+    background: linear-gradient(180deg, var(--accent), var(--accent-cyan));
+    border-radius: 0 3px 3px 0;
+    box-shadow: 0 0 8px rgba(0, 229, 255, 0.6);
+  }
+  [data-theme="light"] .module-card.active::before { background: #2563eb; box-shadow: none; }
+  .module-info { flex: 1; }
+  .module-name { font-weight: 700; font-size: 15px; margin-bottom: 3px; color: var(--text); }
+  .module-desc { color: var(--text-muted); font-size: 13px; line-height: 1.45; }
+  .module-right { display: flex; align-items: center; gap: 14px; flex-shrink: 0; }
+  .module-price { font-weight: 600; font-size: 14px; color: var(--text); white-space: nowrap; }
+  .toggle {
+    width: 42px; height: 24px;
+    background: var(--toggle-off); border-radius: 12px;
+    position: relative; transition: background 0.2s;
+    flex-shrink: 0;
+  }
+  .toggle::after {
+    content: '';
+    position: absolute; top: 2px; left: 2px;
+    width: 20px; height: 20px;
+    background: #fff; border-radius: 50%;
+    transition: transform 0.2s;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+  }
+  .module-card.active .toggle {
+    background: linear-gradient(135deg, var(--accent), var(--accent-cyan));
+    box-shadow: 0 0 12px rgba(0, 229, 255, 0.45);
+  }
+  [data-theme="light"] .module-card.active .toggle { background: #2563eb; box-shadow: none; }
+  .module-card.active .toggle::after { transform: translateX(18px); }
+
+  /* ================== TOKENS ================== */
+  .tokens-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+  @media (max-width: 520px) { .tokens-grid { grid-template-columns: 1fr; } }
+  .token-card {
+    padding: 14px 16px;
+    border: 1.5px solid var(--border);
+    border-radius: 12px;
+    cursor: pointer;
+    transition: all 0.2s;
+    display: flex; justify-content: space-between; align-items: center;
+    background: var(--surface);
+  }
+  .token-card:hover {
+    border-color: var(--border-soft);
+    transform: translateY(-1px);
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.2), 0 0 14px rgba(0, 229, 255, 0.06);
+  }
+  [data-theme="light"] .token-card:hover { border-color: #b8cdea; box-shadow: 0 6px 18px rgba(37, 99, 235, 0.08); }
+  .token-card.selected {
+    border-color: var(--accent-cyan);
+    background: var(--surface-active);
+    box-shadow: 0 0 0 1px rgba(0, 229, 255, 0.1);
+  }
+  [data-theme="light"] .token-card.selected { border-color: #2563eb; background: #f3f8ff; box-shadow: none; }
+  .token-amount { font-weight: 600; font-size: 14px; color: var(--text); }
+  .token-price { color: var(--accent-text); font-weight: 700; font-size: 14px; }
+  .token-price.custom { color: var(--text-muted); font-weight: 500; }
+
+  /* ================== BADGE ================== */
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    background: var(--badge-bg);
+    color: var(--badge-text);
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 700;
+    margin-left: 8px;
+    vertical-align: middle;
+  }
+
+  /* ================== SUMMARY ================== */
+  .summary {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 24px;
+    position: sticky; top: 84px;
+    box-shadow: var(--summary-shadow);
+    backdrop-filter: blur(12px);
+  }
+  [data-theme="dark"] .summary { background: rgba(255,255,255,0.04); }
+  [data-theme="light"] .summary { background: #ffffff; backdrop-filter: none; }
+  .summary-title {
+    font-size: 13px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.08em; color: var(--text-muted); margin-bottom: 16px;
+  }
+  .summary-lines { display: flex; flex-direction: column; gap: 10px; margin-bottom: 18px; }
+  .summary-line {
+    display: flex; justify-content: space-between; gap: 12px;
+    font-size: 14px;
+    padding-bottom: 10px;
+    border-bottom: 1px dashed var(--border);
+  }
+  .summary-line:last-child { border-bottom: none; padding-bottom: 0; }
+  .summary-line .name { color: var(--text-soft); }
+  .summary-line .val { font-weight: 600; color: var(--text); text-align: right; white-space: nowrap; }
+  .summary-line.muted .name,
+  .summary-line.muted .val { color: var(--text-muted); font-weight: 500; }
+
+  .summary-divider { height: 1px; background: var(--border); margin: 16px 0; }
+
+  .summary-total {
+    display: flex; justify-content: space-between; align-items: baseline;
+    margin-bottom: 6px;
+  }
+  .summary-total .label { font-size: 14px; color: var(--text-muted); font-weight: 500; }
+  .summary-total .price {
+    font-size: 30px; font-weight: 800;
+    background: linear-gradient(135deg, var(--accent), var(--accent-cyan));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    letter-spacing: -0.02em;
+  }
+  [data-theme="light"] .summary-total .price {
+    background: none;
+    -webkit-text-fill-color: initial;
+    color: #2563eb;
+  }
+  .summary-total .price small { font-size: 14px; font-weight: 500; color: var(--text-muted); margin-left: 4px; -webkit-text-fill-color: initial; background: none; }
+
+  .summary-saving {
+    background: var(--success-bg); color: var(--success);
+    border: 1px solid var(--success-border);
+    padding: 10px 14px; border-radius: 10px;
+    font-size: 13px; margin-top: 12px;
+    display: none;
+  }
+  [data-theme="light"] .summary-saving { color: #157347; }
+  .summary-saving.show { display: block; }
+
+  .summary-meta { font-size: 12px; color: var(--text-muted); line-height: 1.7; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border); }
+  .summary-meta-row { display: flex; justify-content: space-between; gap: 8px; }
+  .summary-meta-row strong { color: var(--text); font-weight: 600; }
+
+  .btn-group { display: flex; flex-direction: column; gap: 8px; margin-top: 18px; }
+  .btn {
+    padding: 13px 18px;
+    border-radius: 10px;
+    font-size: 14px; font-weight: 700;
+    cursor: pointer;
+    border: none;
+    font-family: inherit;
+    transition: all 0.18s;
+    text-align: center;
+  }
+  .btn-primary {
+    background: linear-gradient(135deg, var(--accent), var(--accent-cyan));
+    color: #fff;
+    box-shadow: 0 0 24px rgba(0, 102, 255, 0.35), inset 0 1px 0 rgba(255,255,255,0.2);
+  }
+  .btn-primary:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 0 36px rgba(0, 229, 255, 0.55), inset 0 1px 0 rgba(255,255,255,0.25);
+  }
+  [data-theme="light"] .btn-primary { background: #2563eb; box-shadow: none; }
+  [data-theme="light"] .btn-primary:hover { background: #1d4ed8; box-shadow: 0 4px 12px rgba(37, 99, 235, 0.3); }
+  .btn-secondary {
+    background: transparent;
+    color: var(--accent-text);
+    border: 1.5px solid var(--border-soft);
+  }
+  .btn-secondary:hover {
+    background: var(--surface-active);
+    border-color: var(--accent-cyan);
+    color: var(--accent-cyan);
+  }
+  [data-theme="light"] .btn-secondary { color: #2563eb; border-color: #dbe3ef; }
+  [data-theme="light"] .btn-secondary:hover { background: #f3f8ff; border-color: #2563eb; color: #2563eb; }
+
+  /* ================== INCLUDED ================== */
+  .included {
+    background: linear-gradient(135deg, rgba(0, 102, 255, 0.08) 0%, rgba(0, 229, 255, 0.04) 100%);
+    border: 1px solid rgba(0, 229, 255, 0.2);
+    border-radius: 16px;
+    padding: 26px 28px;
+    margin-bottom: 20px;
+    position: relative;
+    box-shadow: 0 0 60px rgba(0, 229, 255, 0.08);
+  }
+  [data-theme="light"] .included {
+    background: linear-gradient(135deg, #eef4ff 0%, #f6faff 100%);
+    border-color: #d4e0f2;
+    box-shadow: none;
+  }
+  .included-badge {
+    display: inline-block;
+    background: linear-gradient(135deg, var(--accent), var(--accent-cyan));
+    color: #fff;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    padding: 5px 12px;
+    border-radius: 6px;
+    margin-bottom: 14px;
+    box-shadow: 0 0 14px rgba(0, 229, 255, 0.4);
+  }
+  [data-theme="light"] .included-badge { background: #2563eb; box-shadow: none; }
+  .included-title { font-size: 22px; font-weight: 800; letter-spacing: -0.015em; margin-bottom: 4px; color: var(--text); }
+  .included-sub { color: var(--text-muted); font-size: 14px; margin-bottom: 18px; }
+  .included-analytics {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+    margin-bottom: 16px;
+  }
+  @media (max-width: 768px) { .included-analytics { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 480px) { .included-analytics { grid-template-columns: 1fr; } }
+  .analytics-item {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px 14px;
+    display: flex; flex-direction: column; gap: 3px;
+  }
+  [data-theme="light"] .analytics-item { background: #fff; border-color: #d4e0f2; }
+  .analytics-item strong { font-size: 13.5px; font-weight: 700; color: var(--text); }
+  .analytics-item span { font-size: 12px; color: var(--text-muted); line-height: 1.4; }
+  .included-extras {
+    font-size: 13px; color: var(--text-soft);
+    padding-top: 14px;
+    border-top: 1px solid var(--border);
+  }
+  .included-extras strong { color: var(--text); font-weight: 700; }
+
+  /* ================== INFO NOTES ================== */
+  .info-note {
+    display: flex; gap: 12px;
+    padding: 14px 16px;
+    background: var(--warning-bg);
+    border: 1px solid var(--warning-border);
+    border-radius: 10px;
+    margin-top: 16px;
+    font-size: 13px;
+    color: var(--warning-text);
+    line-height: 1.5;
+  }
+  [data-theme="light"] .info-note { color: #5c4818; }
+  .info-note-icon {
+    width: 22px; height: 22px;
+    background: var(--warning-text); color: var(--bg-alt);
+    border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700; font-size: 13px;
+    font-family: Georgia, serif; font-style: italic;
+    flex-shrink: 0;
+    box-shadow: 0 0 10px rgba(255, 183, 77, 0.4);
+  }
+  [data-theme="light"] .info-note-icon { background: #d97706; color: #fff; box-shadow: none; }
+  .info-note strong { color: var(--text); font-weight: 700; }
+  [data-theme="light"] .info-note strong { color: #2a2306; }
+
+  .billing-note {
+    background: var(--surface);
+    border: 1px dashed var(--border-dashed);
+    border-radius: 10px;
+    padding: 12px 14px;
+    font-size: 13px;
+    color: var(--text-soft);
+    margin-top: 14px;
+  }
+  .billing-note strong { color: var(--text); }
+
+  /* ================== PRICING TABLE ================== */
+  .pricing-groups {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 18px 28px;
+    margin-bottom: 18px;
+  }
+  @media (max-width: 640px) { .pricing-groups { grid-template-columns: 1fr; gap: 14px; } }
+  .pricing-group-name {
+    font-size: 11.5px;
+    font-weight: 700;
+    color: var(--accent-text);
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    margin-bottom: 6px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--border);
+  }
+  .pricing-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 6px 0;
+    font-size: 13.5px;
+  }
+  .pricing-row span { color: var(--text-soft); }
+  .pricing-row b { color: var(--text); font-weight: 700; white-space: nowrap; }
+  .pricing-formula {
+    background: var(--surface);
+    border: 1px dashed var(--border-dashed);
+    border-radius: 10px;
+    padding: 14px 16px;
+    font-size: 13px;
+    color: var(--text-soft);
+    line-height: 1.65;
+  }
+  .pricing-formula strong { color: var(--text); font-weight: 700; }
+  .pricing-formula b { color: var(--accent-text); font-weight: 600; }
+
+  /* ================== FORMULA BOX ================== */
+  .formula-box {
+    background: linear-gradient(180deg, rgba(0, 229, 255, 0.04) 0%, var(--surface) 100%);
+    border: 1px solid rgba(0, 229, 255, 0.15);
+    border-radius: 14px;
+    padding: 22px 24px;
+    margin-top: 14px;
+  }
+  [data-theme="light"] .formula-box {
+    background: linear-gradient(180deg, #f6faff 0%, #fff 100%);
+    border-color: #d4e0f2;
+  }
+  .formula-intro {
+    display: flex; gap: 12px; align-items: flex-start;
+    padding-bottom: 16px;
+    margin-bottom: 18px;
+    border-bottom: 1px solid var(--border);
+  }
+  .formula-icon {
+    width: 32px; height: 32px; flex-shrink: 0;
+    background: linear-gradient(135deg, var(--accent), var(--accent-cyan));
+    color: #fff;
+    border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 800; font-size: 14px;
+    box-shadow: 0 0 14px rgba(0, 229, 255, 0.4);
+  }
+  [data-theme="light"] .formula-icon { background: #2563eb; box-shadow: none; }
+  .formula-intro-text { font-size: 13.5px; color: var(--text-soft); line-height: 1.55; }
+  .formula-intro-text strong { color: var(--text); font-weight: 700; }
+
+  .formula-example-title {
+    font-size: 12.5px; font-weight: 700;
+    color: var(--accent-text);
+    text-transform: uppercase; letter-spacing: 0.07em;
+    margin-bottom: 12px;
+  }
+  .formula-rows { display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px; }
+  .formula-row {
+    display: grid;
+    grid-template-columns: 1fr auto auto;
+    gap: 16px;
+    align-items: center;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 14px;
+    font-size: 13px;
+  }
+  [data-theme="light"] .formula-row { background: #fff; border-color: #e4eaf2; }
+  .formula-row-label { color: var(--text); font-weight: 500; }
+  .formula-row-label em { font-style: normal; color: var(--text-muted); font-weight: 400; }
+  .formula-row-calc {
+    font-family: 'SF Mono', Monaco, 'Courier New', monospace;
+    font-size: 12px;
+    color: var(--text-muted);
+    white-space: nowrap;
+  }
+  .formula-row-result {
+    font-weight: 700; color: var(--accent-text);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    font-size: 13.5px;
+  }
+  .formula-sum {
+    display: grid;
+    grid-template-columns: 1fr auto auto;
+    gap: 16px;
+    align-items: center;
+    padding: 14px 16px;
+    background: linear-gradient(135deg, var(--accent), var(--accent-cyan));
+    color: #fff;
+    border-radius: 10px;
+    font-weight: 700;
+    box-shadow: 0 0 24px rgba(0, 229, 255, 0.3);
+  }
+  [data-theme="light"] .formula-sum { background: #2563eb; box-shadow: none; }
+  .formula-sum-label { font-size: 13.5px; }
+  .formula-sum-total { font-size: 15px; font-weight: 700; opacity: 0.9; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .formula-sum-arrow { font-size: 20px; opacity: 0.6; }
+  .formula-sum-result {
+    background: #fff; color: var(--accent);
+    padding: 6px 14px; border-radius: 8px;
+    font-size: 15px; font-weight: 800;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  [data-theme="light"] .formula-sum-result { color: #2563eb; }
+  @media (max-width: 640px) {
+    .formula-row, .formula-sum {
+      grid-template-columns: 1fr;
+      gap: 4px;
+    }
+    .formula-row-calc, .formula-row-result { text-align: left; }
+    .formula-sum-arrow { display: none; }
+  }
+
+  /* Mobile fit pass */
+  html,
+  body {
+    max-width: 100%;
+    overflow-x: clip;
+  }
+
+  .container {
+    width: 100%;
+  }
+
+  .nav-inner,
+  .nav-right,
+  .layout,
+  .main,
+  .summary,
+  .step,
+  .included,
+  .formula-box,
+  .formula-row,
+  .formula-sum {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .step-title,
+  .step-desc,
+  .included-title,
+  .included-sub,
+  .pricing-row,
+  .pricing-formula,
+  .formula-intro-text,
+  .summary-line {
+    overflow-wrap: anywhere;
+  }
+
+  @media (max-width: 800px) {
+    .nav-inner {
+      height: auto;
+      min-height: 64px;
+      padding-top: 10px;
+      padding-bottom: 10px;
+      gap: 10px;
+    }
+
+    .nav-right {
+      margin-left: auto;
+      gap: 8px;
+      min-width: 0;
+    }
+
+    .nav-link,
+    .nav-demo {
+      display: none;
+    }
+
+    .lang-menu {
+      right: 0;
+      max-width: calc(100vw - 32px);
+    }
+  }
+
+  @media (max-width: 640px) {
+    .container {
+      padding-left: 16px;
+      padding-right: 16px;
+    }
+
+    .page-head {
+      padding: 38px 0 24px;
+    }
+
+    .page-head h1 {
+      font-size: 30px;
+    }
+
+    .main-wrap {
+      padding-bottom: 50px;
+    }
+
+    .step,
+    .included,
+    .summary {
+      padding: 20px 16px;
+      border-radius: 14px;
+    }
+
+    .summary {
+      position: static;
+    }
+
+    .period-toggle {
+      grid-template-columns: 1fr;
+      gap: 4px;
+    }
+
+    .period-btn {
+      min-height: 40px;
+      white-space: normal;
+    }
+
+    .step-header,
+    .formula-intro {
+      align-items: flex-start;
+    }
+
+    .summary-line,
+    .summary-meta-row {
+      gap: 8px;
+    }
+
+    .summary-total {
+      align-items: flex-start;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .summary-total .price {
+      font-size: 26px;
+    }
+
+    .pricing-row {
+      flex-direction: column;
+      gap: 3px;
+    }
+
+    .pricing-row b {
+      white-space: normal;
+    }
+
+    .formula-box {
+      padding: 18px 16px;
+    }
+  }
+
+  @media (max-width: 420px) {
+    .c9-logo {
+      gap: 8px;
+    }
+
+    .c9-logo-cube {
+      width: 28px;
+      height: 28px;
+    }
+
+    .c9-logo-main {
+      font-size: 18px;
+    }
+
+    .c9-logo-sub {
+      display: none;
+    }
+
+    .lang-btn {
+      height: 36px;
+      padding: 0 9px;
+    }
+
+    .included-title {
+      font-size: 20px;
+    }
+
+    .step-title {
+      font-size: 17px;
+    }
+  }
+</style>
+</head>
+<body>
+
+<nav class="nav">
+  <div class="container nav-inner">
+    <a href="главная.html" class="c9-logo">
+      <img src="code9-logo.png" alt="CODE9" class="c9-logo-cube"/>
+      <div class="c9-logo-type">
+        <div class="c9-logo-main">CODE9</div>
+        <div class="c9-logo-sub">ANALYTICS</div>
+      </div>
+    </a>
+    <div class="nav-right">
+      <a href="главная.html" class="nav-link" data-i18n="nav.home">← На главную</a>
+      <a href="#login" class="nav-login" data-i18n="nav.login">Войти</a>
+      <a href="#register" class="nav-register" data-i18n="nav.register">Регистрация</a>
+      <a href="https://analytics.aicode9.ru/" target="_blank" rel="noopener" class="nav-demo" data-i18n="nav.demo"><span class="nav-demo-dot"></span>Демо</a>
+      <div class="lang-select" id="langSelect">
+        <button class="lang-btn" type="button" id="langBtn">
+          <span id="langCurrent">RU</span>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+        <div class="lang-menu" role="menu">
+          <button type="button" class="lang-item" data-lang="ru"><span class="lang-flag">🇷🇺</span><span>Русский</span></button>
+          <button type="button" class="lang-item" data-lang="en"><span class="lang-flag">🇬🇧</span><span>English</span></button>
+          <button type="button" class="lang-item" data-lang="es"><span class="lang-flag">🇪🇸</span><span>Español</span></button>
+        </div>
+      </div>
+    </div>
+  </div>
+</nav>
+
+<section class="page-head">
+  <div class="container">
+    <div class="header-text">
+      <h1>Конструктор <em>тарифа CODE9</em></h1>
+      <p>Соберите тариф под свой отдел продаж: выберите сервер, AI-модули и нужный объём токенов.</p>
+    </div>
+  </div>
+</section>
+
+<div class="main-wrap">
+<div class="container">
+
+  <div class="layout">
+    <div class="main">
+      <!-- Included in all tariffs -->
+      <div class="included">
+        <div class="included-badge">Включено во все тарифы</div>
+        <div class="included-title">Дашборд аналитики</div>
+        <div class="included-sub">Главный инструмент для управления отделом продаж — клиенты подключают его в первую очередь</div>
+        <div class="included-analytics">
+          <div class="analytics-item"><strong>Аналитика продаж</strong><span>выручка, конверсии, динамика</span></div>
+          <div class="analytics-item"><strong>Товарная аналитика</strong><span>что и как продаётся, остатки</span></div>
+          <div class="analytics-item"><strong>По менеджерам</strong><span>активность, результат, KPI</span></div>
+          <div class="analytics-item"><strong>По отказам</strong><span>причины, сегменты, точки роста</span></div>
+        </div>
+        <div class="included-extras">
+          Также в каждом тарифе: <strong>База знаний</strong> · <strong>Транскрибация звонков</strong> <span style="color:var(--text-muted);">(1,5 токена / мин — списывается отдельно)</span>
+        </div>
+      </div>
+
+      <!-- Step 1 -->
+      <div class="step">
+        <div class="step-header">
+          <div class="step-num">1</div>
+          <div>
+            <div class="step-title">Выберите сервер</div>
+            <div class="step-desc">Базовая конфигурация — сервер с AI-токенами и пользователями</div>
+          </div>
+        </div>
+        <div class="server-grid" id="serverGrid">
+          <div class="server-card" data-price="4990" data-name="Server Start" data-tokens="3 000" data-users="" data-refresh="1 раз в день">
+            <div class="server-name">Server Start</div>
+            <div class="server-price">4 990 ₽ <small>/ мес</small></div>
+            <ul class="server-features">
+              <li>3 000 AI-токенов</li>
+              <li>обновление 1 раз в день</li>
+            </ul>
+          </div>
+          <div class="server-card" data-price="9990" data-name="Server Team" data-tokens="9 000" data-users="" data-refresh="каждые 10 часов">
+            <div class="server-name">Server Team</div>
+            <div class="server-price">9 990 ₽ <small>/ мес</small></div>
+            <ul class="server-features">
+              <li>9 000 AI-токенов</li>
+              <li>обновление каждые 10 часов</li>
+            </ul>
+          </div>
+          <div class="server-card" data-price="14990" data-name="Server Pro" data-tokens="18 000" data-users="" data-refresh="каждый час">
+            <div class="server-name">Server Pro</div>
+            <div class="server-price">14 990 ₽ <small>/ мес</small></div>
+            <ul class="server-features">
+              <li>18 000 AI-токенов</li>
+              <li>обновление каждый час</li>
+            </ul>
+          </div>
+          <div class="server-card selected" data-price="39990" data-name="Enterprise Server" data-tokens="50 000" data-users="до 50" data-refresh="каждые 15 минут">
+            <div class="server-name">Enterprise Server</div>
+            <div class="server-price">39 990 ₽ <small>/ мес</small></div>
+            <ul class="server-features">
+              <li>50 000 AI-токенов</li>
+              <li>до 50 AI-пользователей</li>
+              <li>обновление каждые 15 минут</li>
+            </ul>
+          </div>
+        </div>
+        <div class="info-note">
+          <div class="info-note-icon">i</div>
+          <div><strong>Большой отдел продаж?</strong> amoCRM ограничивает интеграции 7 запросами в секунду. Для отделов от 30 менеджеров рекомендуем <strong>Enterprise Server</strong> + приоритетную очередь — обеспечивает стабильную работу под нагрузкой.</div>
+        </div>
+      </div>
+
+      <!-- Step 2 -->
+      <div class="step">
+        <div class="step-header">
+          <div class="step-num">2</div>
+          <div>
+            <div class="step-title">Добавьте AI-модули</div>
+            <div class="step-desc">Подключаемые возможности для отдела продаж</div>
+          </div>
+        </div>
+        <div class="module-list" id="moduleList">
+          <div class="module-card active" data-price="5000" data-name="Чат-боты на базе знаний">
+            <div class="module-info">
+              <div class="module-name">Чат-боты на базе знаний</div>
+              <div class="module-desc">Автоответы клиентам в чатах и письмах на основе базы знаний компании</div>
+            </div>
+            <div class="module-right">
+              <div class="module-price">+5 000 ₽ / мес</div>
+              <div class="toggle"></div>
+            </div>
+          </div>
+          <div class="module-card active" data-price="5000" data-name="РОП — контроль упущенных сделок">
+            <div class="module-info">
+              <div class="module-name">РОП — контроль упущенных сделок</div>
+              <div class="module-desc">AI находит упущенные сделки, ставит задачи менеджерам и контролирует отдел</div>
+            </div>
+            <div class="module-right">
+              <div class="module-price">+5 000 ₽ / мес</div>
+              <div class="toggle"></div>
+            </div>
+          </div>
+          <div class="module-card" data-price="3000" data-name="Автодействия системы">
+            <div class="module-info">
+              <div class="module-name">Автодействия системы</div>
+              <div class="module-desc">Формирует счета, ставит задачи на перезвон, переводит сделки в воронках и отправляет напоминания</div>
+            </div>
+            <div class="module-right">
+              <div class="module-price">+3 000 ₽ / мес</div>
+              <div class="toggle"></div>
+            </div>
+          </div>
+          <div class="module-card" data-price="7000" data-name="Речевая аналитика">
+            <div class="module-info">
+              <div class="module-name">Речевая аналитика</div>
+              <div class="module-desc">AI-анализ звонков: эмоции, скрипты, ключевые моменты, причины отказов</div>
+            </div>
+            <div class="module-right">
+              <div class="module-price">+7 000 ₽ / мес</div>
+              <div class="toggle"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Step 3 -->
+      <div class="step">
+        <div class="step-header">
+          <div class="step-num">3</div>
+          <div>
+            <div class="step-title">Дополнительные токены</div>
+            <div class="step-desc">Токены расходуются на анализ звонков, чаты, письма, обновления базы и AI-задачи</div>
+          </div>
+        </div>
+        <div class="tokens-grid" id="tokensGrid">
+          <div class="token-card selected" data-price="0" data-name="Без пакета">
+            <div class="token-amount">Без пакета</div>
+            <div class="token-price">0 ₽</div>
+          </div>
+          <div class="token-card" data-price="3000" data-name="+10 000 токенов">
+            <div class="token-amount">+10 000 токенов</div>
+            <div class="token-price">+3 000 ₽ / мес</div>
+          </div>
+          <div class="token-card" data-price="7000" data-name="+25 000 токенов">
+            <div class="token-amount">+25 000 токенов</div>
+            <div class="token-price">+7 000 ₽ / мес</div>
+          </div>
+          <div class="token-card" data-price="12000" data-name="+50 000 токенов">
+            <div class="token-amount">+50 000 токенов</div>
+            <div class="token-price">+12 000 ₽ / мес</div>
+          </div>
+          <div class="token-card" data-price="0" data-name="+100 000 токенов" data-custom="1">
+            <div class="token-amount">+100 000 токенов <span class="badge">по договору</span></div>
+            <div class="token-price custom">индивидуально</div>
+          </div>
+        </div>
+        <div class="billing-note">
+          <strong>Как списываются токены:</strong> за каждое действие AI и за анализ каждого звонка. Подробный прайс ниже ↓
+        </div>
+      </div>
+
+      <!-- Pricing reference -->
+      <div class="step">
+        <div class="step-header">
+          <div class="step-num">₽</div>
+          <div>
+            <div class="step-title">Сколько токенов за каждое действие</div>
+            <div class="step-desc">Прозрачная тарификация — цена любого действия AI фиксирована</div>
+          </div>
+        </div>
+        <div class="pricing-groups">
+          <div class="pricing-group">
+            <div class="pricing-group-name">Звонки</div>
+            <div class="pricing-row"><span>Транскрибация</span><b>1,5 токена / мин</b></div>
+            <div class="pricing-row"><span>Анализ звонка (эмоции, скрипт, итоги)</span><b>5 токенов</b></div>
+            <div class="pricing-row"><span>Речевая аналитика — развёрнутый отчёт</span><b>10 токенов</b></div>
+          </div>
+          <div class="pricing-group">
+            <div class="pricing-group-name">Коммуникации с клиентом</div>
+            <div class="pricing-row"><span>Ответ в чате (чат-бот)</span><b>2 токена</b></div>
+            <div class="pricing-row"><span>AI-письмо / автоответ</span><b>3 токена</b></div>
+            <div class="pricing-row"><span>Сложный ответ по базе знаний</span><b>5 токенов</b></div>
+          </div>
+          <div class="pricing-group">
+            <div class="pricing-group-name">Автодействия</div>
+            <div class="pricing-row"><span>Постановка задачи</span><b>1 токен</b></div>
+            <div class="pricing-row"><span>Напоминание</span><b>1 токен</b></div>
+            <div class="pricing-row"><span>Перевод сделки по воронке</span><b>1 токен</b></div>
+            <div class="pricing-row"><span>Формирование счёта</span><b>2 токена</b></div>
+          </div>
+          <div class="pricing-group">
+            <div class="pricing-group-name">AI-РОП</div>
+            <div class="pricing-row"><span>Анализ одной сделки</span><b>5 токенов</b></div>
+            <div class="pricing-row"><span>Анализ всей истории клиента</span><b>20–30 токенов</b></div>
+            <div class="pricing-row"><span>Ежедневный скан отдела (на 1 менеджера)</span><b>5 токенов</b></div>
+          </div>
+        </div>
+        <div class="formula-box">
+          <div class="formula-intro">
+            <div class="formula-icon">ƒ</div>
+            <div class="formula-intro-text">
+              <strong>1 токен ≈ 1 000 LLM-токенов</strong> обработки AI — примерно страница текста на входе или развёрнутый ответ. Чем больше данных AI читает и анализирует, тем больше токенов. Транскрибация тарифицируется отдельно — по минутам звучания.
+            </div>
+          </div>
+
+          <div class="formula-example-title">Пример: AI-РОП анализирует всю историю клиента</div>
+          <div class="formula-rows">
+            <div class="formula-row">
+              <div class="formula-row-label">Звонки <em>(расшифровки)</em></div>
+              <div class="formula-row-calc">5 × ~2 000</div>
+              <div class="formula-row-result">~10 000</div>
+            </div>
+            <div class="formula-row">
+              <div class="formula-row-label">Чаты клиента</div>
+              <div class="formula-row-calc">30 × ~200</div>
+              <div class="formula-row-result">~6 000</div>
+            </div>
+            <div class="formula-row">
+              <div class="formula-row-label">Письма</div>
+              <div class="formula-row-calc">10 × ~500</div>
+              <div class="formula-row-result">~5 000</div>
+            </div>
+            <div class="formula-row">
+              <div class="formula-row-label">Промпт AI + отчёт</div>
+              <div class="formula-row-calc">~4 000</div>
+              <div class="formula-row-result">~4 000</div>
+            </div>
+          </div>
+
+          <div class="formula-sum">
+            <div class="formula-sum-label">Всего LLM-токенов</div>
+            <div class="formula-sum-total">~25 000 →</div>
+            <div class="formula-sum-result">~25 токенов</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Step 4 -->
+      <div class="step">
+        <div class="step-header">
+          <div class="step-num">4</div>
+          <div>
+            <div class="step-title">SLA и инфраструктура</div>
+            <div class="step-desc">Дополнительные гарантии и выделенные ресурсы</div>
+          </div>
+        </div>
+        <div class="module-list" id="slaList">
+          <div class="module-card" data-price="10000" data-name="Приоритетная очередь">
+            <div class="module-info">
+              <div class="module-name">Приоритетная очередь</div>
+              <div class="module-desc">Более быстрая обработка задач и приоритет в очереди</div>
+            </div>
+            <div class="module-right">
+              <div class="module-price">+10 000 ₽ / мес</div>
+              <div class="toggle"></div>
+            </div>
+          </div>
+          <div class="module-card" data-price="20000" data-name="SLA">
+            <div class="module-info">
+              <div class="module-name">SLA</div>
+              <div class="module-desc">Гарантированная поддержка, контроль нагрузки, регламент реакции</div>
+            </div>
+            <div class="module-right">
+              <div class="module-price">+20 000 ₽ / мес</div>
+              <div class="toggle"></div>
+            </div>
+          </div>
+          <div class="module-card" data-price="0" data-name="Частный контур" data-custom="1">
+            <div class="module-info">
+              <div class="module-name">Частный контур <span class="badge">по договору</span></div>
+              <div class="module-desc">Выделенная инфраструктура, отдельные правила безопасности и интеграции</div>
+            </div>
+            <div class="module-right">
+              <div class="module-price">индивидуально</div>
+              <div class="toggle"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Summary -->
+    <div class="summary">
+      <div class="summary-title">Ваш тариф</div>
+      <div class="period-toggle">
+        <button class="period-btn active" data-period="month" data-discount="0">Месяц</button>
+        <button class="period-btn" data-period="half" data-discount="0.1">6 мес <span class="discount">−10%</span></button>
+        <button class="period-btn" data-period="year" data-discount="0.2">Год <span class="discount">−20%</span></button>
+      </div>
+      <div class="summary-lines" id="summaryLines"></div>
+
+      <div class="summary-divider"></div>
+
+      <div class="summary-total">
+        <div class="label">Итого</div>
+        <div class="price"><span id="totalPrice">49 990</span> ₽<small id="totalPeriod">/ мес</small></div>
+      </div>
+      <div class="summary-saving" id="summarySaving"></div>
+
+      <div class="summary-meta" id="summaryMeta">
+        <div class="summary-meta-row"><span>AI-токенов включено</span><strong id="metaTokens">50 000</strong></div>
+        <div class="summary-meta-row" id="metaUsersRow"><span>AI-пользователей</span><strong id="metaUsers">до 50</strong></div>
+        <div class="summary-meta-row"><span>Обновление</span><strong id="metaRefresh">каждые 15 минут</strong></div>
+      </div>
+
+      <div class="btn-group">
+        <button class="btn btn-primary">Собрать тариф</button>
+        <button class="btn btn-secondary">Запросить расчёт</button>
+      </div>
+    </div>
+  </div>
+</div>
+</div>
+
+<div class="lamp-chain" id="lampChain" role="button" tabindex="0" aria-label="Потяните, чтобы переключить свет" title="Потяните, чтобы переключить свет">
+  <div class="chain-ceiling"></div>
+  <div class="chain-cord" id="chainCord"></div>
+  <div class="chain-fixture">
+    <div class="chain-socket"></div>
+    <div class="chain-thread"></div>
+    <div class="chain-bulb"></div>
+  </div>
+</div>
+
+<script>
+  (function initLampChain() {
+    const chain = document.getElementById('lampChain');
+    const cord = document.getElementById('chainCord');
+    if (!chain || !cord) return;
+    const baseHeight = parseFloat(getComputedStyle(cord).height) || 100;
+    const maxStretch = 80;
+    const threshold = 28;
+    let dragging = false, startY = 0, pullY = 0, pointerId = null;
+
+    function syncBulbToTheme() {
+      const t = document.documentElement.getAttribute('data-theme');
+      chain.classList.toggle('on', t === 'light');
+    }
+    syncBulbToTheme();
+
+    function toggle() {
+      const cur = document.documentElement.getAttribute('data-theme');
+      const next = cur === 'dark' ? 'light' : 'dark';
+      document.documentElement.setAttribute('data-theme', next);
+      localStorage.setItem('code9-theme', next);
+      syncBulbToTheme();
+    }
+    function swing() {
+      chain.classList.remove('swing');
+      void chain.offsetWidth;
+      chain.classList.add('swing');
+      setTimeout(() => chain.classList.remove('swing'), 950);
+    }
+    chain.addEventListener('pointerdown', (e) => {
+      dragging = true;
+      startY = e.clientY;
+      pullY = 0;
+      pointerId = e.pointerId;
+      chain.setPointerCapture(pointerId);
+      chain.classList.add('pulling');
+    });
+    chain.addEventListener('pointermove', (e) => {
+      if (!dragging) return;
+      pullY = Math.max(0, Math.min(maxStretch, e.clientY - startY));
+      cord.style.height = (baseHeight + pullY) + 'px';
+    });
+    function end() {
+      if (!dragging) return;
+      dragging = false;
+      chain.classList.remove('pulling');
+      cord.style.height = '';
+      if (pointerId !== null) { try { chain.releasePointerCapture(pointerId); } catch (e) {} pointerId = null; }
+      const pulled = pullY;
+      pullY = 0;
+      if (pulled >= threshold) { toggle(); swing(); }
+    }
+    chain.addEventListener('pointerup', end);
+    chain.addEventListener('pointercancel', end);
+    chain.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); swing(); }
+    });
+  })();
+
+  const state = {
+    server: null,
+    modules: new Set(),
+    tokens: null,
+    sla: new Set(),
+    period: 'month',
+    discount: 0
+  };
+
+  const fmt = n => n.toLocaleString('ru-RU');
+
+  function initServers() {
+    document.querySelectorAll('#serverGrid .server-card').forEach(card => {
+      card.addEventListener('click', () => {
+        document.querySelectorAll('#serverGrid .server-card').forEach(c => c.classList.remove('selected'));
+        card.classList.add('selected');
+        state.server = {
+          name: card.dataset.name,
+          price: +card.dataset.price,
+          tokens: card.dataset.tokens,
+          users: card.dataset.users,
+          refresh: card.dataset.refresh
+        };
+        render();
+      });
+      if (card.classList.contains('selected')) card.click();
+    });
+  }
+
+  function initModules(listId, setRef) {
+    document.querySelectorAll('#' + listId + ' .module-card').forEach(card => {
+      card.addEventListener('click', () => {
+        const key = card.dataset.name;
+        if (setRef.has(key)) {
+          setRef.delete(key);
+          card.classList.remove('active');
+        } else {
+          setRef.add(key);
+          card.classList.add('active');
+        }
+        render();
+      });
+      if (card.classList.contains('active')) setRef.add(card.dataset.name);
+    });
+  }
+
+  function initTokens() {
+    document.querySelectorAll('#tokensGrid .token-card').forEach(card => {
+      card.addEventListener('click', () => {
+        document.querySelectorAll('#tokensGrid .token-card').forEach(c => c.classList.remove('selected'));
+        card.classList.add('selected');
+        state.tokens = {
+          name: card.dataset.name,
+          price: +card.dataset.price,
+          custom: card.dataset.custom === '1'
+        };
+        render();
+      });
+      if (card.classList.contains('selected')) card.click();
+    });
+  }
+
+  function initPeriod() {
+    document.querySelectorAll('.period-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.period-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        state.period = btn.dataset.period;
+        state.discount = +btn.dataset.discount;
+        render();
+      });
+    });
+  }
+
+  function getModuleData(listId, set) {
+    const out = [];
+    document.querySelectorAll('#' + listId + ' .module-card').forEach(card => {
+      if (set.has(card.dataset.name)) {
+        out.push({
+          name: card.dataset.name,
+          price: +card.dataset.price,
+          custom: card.dataset.custom === '1'
+        });
+      }
+    });
+    return out;
+  }
+
+  function render() {
+    const lines = document.getElementById('summaryLines');
+    lines.innerHTML = '';
+
+    let base = state.server ? state.server.price : 0;
+    let modulesSum = 0;
+    let slaSum = 0;
+    let tokensSum = state.tokens && !state.tokens.custom ? state.tokens.price : 0;
+
+    if (state.server) addLine(lines, state.server.name, fmt(state.server.price) + ' ₽', false);
+
+    const mods = getModuleData('moduleList', state.modules);
+    if (mods.length) {
+      mods.forEach(m => {
+        modulesSum += m.price;
+        addLine(lines, m.name, '+' + fmt(m.price) + ' ₽', false);
+      });
+    } else {
+      addLine(lines, 'AI-модули', 'не выбраны', true);
+    }
+
+    if (state.tokens && state.tokens.price > 0) {
+      addLine(lines, state.tokens.name, '+' + fmt(state.tokens.price) + ' ₽', false);
+    } else if (state.tokens && state.tokens.custom) {
+      addLine(lines, state.tokens.name, 'по договору', true);
+    } else {
+      addLine(lines, 'Доп. токены', 'не выбраны', true);
+    }
+
+    const slas = getModuleData('slaList', state.sla);
+    if (slas.length) {
+      slas.forEach(s => {
+        if (!s.custom) slaSum += s.price;
+        addLine(lines, s.name, s.custom ? 'по договору' : '+' + fmt(s.price) + ' ₽', s.custom);
+      });
+    } else {
+      addLine(lines, 'SLA', 'не выбран', true);
+    }
+
+    const monthly = base + modulesSum + tokensSum + slaSum;
+    const discounted = Math.round(monthly * (1 - state.discount));
+
+    document.getElementById('totalPrice').textContent = fmt(discounted);
+
+    const periodLabel = { month: '/ мес', half: '/ мес', year: '/ мес' }[state.period];
+    document.getElementById('totalPeriod').textContent = ' ' + periodLabel;
+
+    const savingEl = document.getElementById('summarySaving');
+    if (state.discount > 0 && monthly > 0) {
+      const months = state.period === 'year' ? 12 : 6;
+      const totalPaid = discounted * months;
+      const wouldPay = monthly * months;
+      const saved = wouldPay - totalPaid;
+      savingEl.innerHTML = `<strong>${fmt(discounted)} ₽ / мес</strong> при оплате за ${state.period === 'year' ? 'год' : '6 мес'}<br>${fmt(totalPaid)} ₽ за ${state.period === 'year' ? 'год' : '6 мес'}<br>экономия ${fmt(saved)} ₽`;
+      savingEl.classList.add('show');
+    } else {
+      savingEl.classList.remove('show');
+    }
+
+    if (state.server) {
+      document.getElementById('metaTokens').textContent = state.server.tokens;
+      const usersRow = document.getElementById('metaUsersRow');
+      if (state.server.users) {
+        usersRow.style.display = '';
+        document.getElementById('metaUsers').textContent = state.server.users;
+      } else {
+        usersRow.style.display = 'none';
+      }
+      document.getElementById('metaRefresh').textContent = state.server.refresh;
+    }
+  }
+
+  function addLine(parent, name, val, muted) {
+    const div = document.createElement('div');
+    div.className = 'summary-line' + (muted ? ' muted' : '');
+    div.innerHTML = `<span class="name">${name}</span><span class="val">${val}</span>`;
+    parent.appendChild(div);
+  }
+
+  initServers();
+  initModules('moduleList', state.modules);
+  initModules('slaList', state.sla);
+  initTokens();
+  initPeriod();
+  render();
+</script>
+</body>
+</html>

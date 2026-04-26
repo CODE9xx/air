@@ -4,7 +4,8 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { useLocale, useTranslations } from 'next-intl';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { useState } from 'react';
 import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
 import { api } from '@/lib/api';
@@ -24,21 +25,52 @@ export function ResetPasswordForm() {
   const rootT = useTranslations();
   const locale = useLocale();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { toast } = useToast();
+  const [resending, setResending] = useState(false);
+  const initialEmail = searchParams.get('email') ?? '';
 
   const {
     register,
     handleSubmit,
+    trigger,
+    watch,
     formState: { errors, isSubmitting },
-  } = useForm<FormValues>({ resolver: zodResolver(schema) });
+  } = useForm<FormValues>({
+    resolver: zodResolver(schema),
+    defaultValues: { email: initialEmail },
+  });
 
   const onSubmit = async (values: FormValues) => {
     try {
-      await api.post('/auth/password-reset/confirm', values, { scope: 'public' });
+      await api.post(
+        '/auth/password-reset/confirm',
+        { ...values, email: values.email.trim().toLowerCase() },
+        { scope: 'public' },
+      );
       toast({ kind: 'success', title: t('success') });
       router.push(`/${locale}/login`);
     } catch (err) {
       toast({ kind: 'error', title: rootT('common.error'), description: rootT(mapAuthErrorKey(err)) });
+    }
+  };
+
+  const resendCode = async () => {
+    const emailValid = await trigger('email');
+    if (!emailValid) return;
+
+    setResending(true);
+    try {
+      await api.post(
+        '/auth/password-reset/request',
+        { email: watch('email').trim().toLowerCase() },
+        { scope: 'public' },
+      );
+      toast({ kind: 'info', title: t('resent') });
+    } catch (err) {
+      toast({ kind: 'error', title: rootT('common.error'), description: rootT(mapAuthErrorKey(err)) });
+    } finally {
+      setResending(false);
     }
   };
 
@@ -47,6 +79,7 @@ export function ResetPasswordForm() {
       <div>
         <label className="label">{t('email')}</label>
         <Input type="email" {...register('email')} error={errors.email && tErr('invalidEmail')} />
+        <p className="mt-2 text-xs text-muted-foreground">{t('emailHint')}</p>
       </div>
       <div>
         <label className="label">{t('code')}</label>
@@ -59,6 +92,14 @@ export function ResetPasswordForm() {
       <Button type="submit" loading={isSubmitting} className="w-full">
         {t('submit')}
       </Button>
+      <button
+        type="button"
+        onClick={resendCode}
+        disabled={isSubmitting || resending}
+        className="block w-full text-center text-sm font-medium text-primary hover:underline disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        {resending ? t('resending') : t('resend')}
+      </button>
     </form>
   );
 }

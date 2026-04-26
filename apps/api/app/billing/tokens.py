@@ -24,6 +24,7 @@ PLAN_MONTHLY_TOKENS: dict[str, int] = {
     "start": 3000,
     "team": 9000,
     "pro": 18000,
+    "enterprise": 50000,
 }
 
 
@@ -190,6 +191,9 @@ def token_account_snapshot(account: TokenAccount) -> dict[str, Any]:
         "balance_mtokens": balance,
         "reserved_mtokens": reserved,
         "available_mtokens": available,
+        "subscription_expires_at": (
+            account.subscription_expires_at.isoformat() if account.subscription_expires_at else None
+        ),
         "created_at": account.created_at.isoformat() if account.created_at else None,
         "updated_at": account.updated_at.isoformat() if account.updated_at else None,
     }
@@ -262,3 +266,41 @@ async def reserve_tokens_for_export_job(
         )
     )
     return reservation
+
+
+async def credit_tokens(
+    session: AsyncSession,
+    *,
+    workspace: Workspace,
+    amount_mtokens: int,
+    description: str,
+    reference: str,
+    kind: str = "purchase",
+    metadata: dict[str, Any] | None = None,
+    crm_connection_id: uuid.UUID | None = None,
+    job_id: uuid.UUID | None = None,
+) -> TokenAccount:
+    """Credit AIC9 tokens to a workspace wallet and append an immutable ledger row."""
+    if amount_mtokens <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"error": {"code": "invalid_token_amount", "message": "Token amount must be positive"}},
+        )
+    account = await get_or_create_token_account(session, workspace, for_update=True)
+    account.balance_mtokens = int(account.balance_mtokens or 0) + int(amount_mtokens)
+    session.add(
+        TokenLedger(
+            token_account_id=account.id,
+            workspace_id=workspace.id,
+            crm_connection_id=crm_connection_id,
+            job_id=job_id,
+            amount_mtokens=int(amount_mtokens),
+            balance_after_mtokens=int(account.balance_mtokens or 0),
+            reserved_after_mtokens=int(account.reserved_mtokens or 0),
+            kind=kind,
+            description=description,
+            reference=reference,
+            metadata_json=metadata or {},
+        )
+    )
+    return account

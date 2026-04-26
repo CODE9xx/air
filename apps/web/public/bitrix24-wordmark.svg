@@ -1,0 +1,7 @@
+<svg width="360" height="120" viewBox="0 0 360 120" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Bitrix24">
+  <rect width="360" height="120" fill="white"/>
+  <text x="36" y="76" fill="#46bfef" font-family="Arial, Helvetica, sans-serif" font-size="58" font-weight="800" letter-spacing="-3">Bitrix</text>
+  <text x="208" y="76" fill="#0064a8" font-family="Arial, Helvetica, sans-serif" font-size="58" font-weight="800" letter-spacing="-3">24</text>
+  <circle cx="308" cy="53" r="20" stroke="#0064a8" stroke-width="5"/>
+  <path d="M308 41v13h10" stroke="#0064a8" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

@@ -1,5 +1,5 @@
 """
-Code9 shared Python types.
+CODE9 shared Python types.
 
 Пока — тонкие TypedDict'ы для enum-значений, которые API и worker могут
 импортировать без круговых зависимостей.

@@ -117,7 +117,9 @@ services:
       # Если Timeweb managed DB резолвится только изнутри приватной сети —
       # не нужно. Блок оставлен как подсказка для ручного hosts-override.
       # - "db.timeweb.internal:192.168.0.4"
-      []
+      # DNS api.telegram.org сейчас может отдавать 149.154.166.110,
+      # который с VPS недоступен; этот IP Telegram отвечает стабильно.
+      - "api.telegram.org:149.154.167.220"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health"]
       interval: 30s

@@ -49,7 +49,8 @@ export function LoginForm({ redirectTo }: LoginFormProps = {}) {
     try {
       const res = await api.post<LoginResponse>('/auth/login', values, { scope: 'public' });
       userTokenStore.set(res.access_token);
-      setUser(res.user);
+      const currentUser = await api.get<User>('/auth/me').catch(() => res.user);
+      setUser(currentUser);
       router.push(redirectTo ?? `/${locale}/app`);
     } catch (err) {
       const key = mapAuthErrorKey(err);

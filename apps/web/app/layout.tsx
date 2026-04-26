@@ -5,7 +5,7 @@ import type { Metadata } from 'next';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'Code9 Analytics',
+  title: 'CODE9 Analytics',
   description: 'CRM-аудит, выгрузки и AI-аналитика для amoCRM / Kommo / Bitrix24.',
 };
 

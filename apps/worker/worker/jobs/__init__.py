@@ -18,7 +18,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from . import ai, audit, billing, crm, crm_pull, delete, export, retention
+from . import ai, audit, billing, crm, crm_pull, delete, email_pull, export, retention
 
 JOBS: dict[str, Callable[..., Any]] = {
     # CRM
@@ -28,6 +28,7 @@ JOBS: dict[str, Callable[..., Any]] = {
     "normalize_tenant_data": crm.normalize_tenant_data,
     # CRM pull (Phase 2A: real amoCRM first-pull after OAuth)
     "pull_amocrm_core": crm_pull.pull_amocrm_core,
+    "pull_email_imap": email_pull.pull_email_imap,
     # Export
     "build_export_zip": export.build_export_zip,
     "trial_export": export.trial_export,
@@ -62,6 +63,7 @@ __all__ = [
     "JOBS",
     "crm",
     "crm_pull",
+    "email_pull",
     "export",
     "audit",
     "delete",

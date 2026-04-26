@@ -6,14 +6,26 @@ aicode9.ru {
         header_up X-Forwarded-Proto https
     }
 
+    @embed path /embed/* /ru/embed/* /en/embed/* /es/embed/*
+    @notEmbed {
+        not path /embed/* /ru/embed/* /en/embed/* /es/embed/*
+    }
+
     header {
         Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
-        X-Frame-Options "DENY"
         X-Content-Type-Options "nosniff"
         Referrer-Policy "strict-origin-when-cross-origin"
         Permissions-Policy "camera=(), microphone=(), geolocation=(), interest-cohort=()"
-        Content-Security-Policy "default-src 'self'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://www.amocrm.ru; connect-src 'self' https://api.aicode9.ru https://www.amocrm.ru https://*.amocrm.ru; frame-src https://www.amocrm.ru https://*.amocrm.ru; font-src 'self' data:; frame-ancestors 'none';"
         -Server
+    }
+
+    header @notEmbed {
+        X-Frame-Options "DENY"
+        Content-Security-Policy "default-src 'self'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://www.amocrm.ru; connect-src 'self' https://api.aicode9.ru https://www.amocrm.ru https://*.amocrm.ru; frame-src https://www.amocrm.ru https://*.amocrm.ru; font-src 'self' data:; frame-ancestors 'none';"
+    }
+
+    header @embed {
+        Content-Security-Policy "default-src 'self'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; connect-src 'self' https://api.aicode9.ru; font-src 'self' data:; frame-ancestors https://*.amocrm.ru https://*.kommo.com;"
     }
 
     log {
@@ -61,7 +73,7 @@ api.aicode9.ru {
 demo.aicode9.ru {
     encode zstd gzip
 
-    @demoNextRoutes path /client-login /ru/client-login /en/client-login /login /ru/login /en/login /register /ru/register /en/register /verify-email /ru/verify-email /en/verify-email /forgot-password /ru/forgot-password /en/forgot-password /reset-password /ru/reset-password /en/reset-password /app* /ru/app* /en/app* /admin* /ru/admin* /en/admin*
+    @demoNextRoutes path /ru /en /es /client-login /ru/client-login /en/client-login /es/client-login /login /ru/login /en/login /es/login /register /ru/register /en/register /es/register /verify-email /ru/verify-email /en/verify-email /es/verify-email /forgot-password /ru/forgot-password /en/forgot-password /es/forgot-password /reset-password /ru/reset-password /en/reset-password /es/reset-password /app* /ru/app* /en/app* /es/app* /admin* /ru/admin* /en/admin* /es/admin*
     handle @demoNextRoutes {
         reverse_proxy web:3000 {
             header_up X-Real-IP {remote_host}

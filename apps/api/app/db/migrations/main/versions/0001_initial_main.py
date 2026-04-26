@@ -4,7 +4,7 @@ Revision ID: 0001_initial_main
 Revises:
 Create Date: 2026-04-18
 
-Создаёт весь public-слой Code9 Analytics: users, workspaces, crm_connections,
+Создаёт весь public-слой CODE9 Analytics: users, workspaces, crm_connections,
 billing, jobs, notifications, admin-таблицы, deletion_requests и полный
 набор AI-таблиц.
 

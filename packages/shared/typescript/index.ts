@@ -1,7 +1,7 @@
 // Общие TypeScript-типы между apps/web и (в перспективе) API-генерацией.
 // Источник истины — docs/api/CONTRACT.md.
 
-export type Locale = 'ru' | 'en';
+export type Locale = 'ru' | 'en' | 'es';
 
 export interface User {
   id: string;
@@ -11,6 +11,13 @@ export interface User {
   email_verified: boolean;
   two_factor_enabled?: boolean;
   workspaces?: WorkspaceMembership[];
+  support_mode?: {
+    active: boolean;
+    support_session_id: string;
+    admin_email: string;
+    reason: string;
+    expires_at: string;
+  };
 }
 
 export interface WorkspaceMembership {
@@ -59,6 +66,21 @@ export interface CrmConnectionMetadata {
     companies?: number;
     contacts?: number;
     deals?: number;
+    tags?: number;
+    tasks?: number;
+    notes?: number;
+    calls?: number;
+    chats?: number;
+    messages?: number;
+    events?: number;
+    products?: number;
+    deal_products?: number;
+    deal_contacts?: number;
+    deal_companies?: number;
+    stage_transitions?: number;
+    deal_sources?: number;
+    custom_fields?: number;
+    custom_field_values?: number;
   };
   last_trial_export_at?: string | null;
   last_trial_export_counts?: {
@@ -82,6 +104,28 @@ export interface CrmConnectionMetadata {
       companies?: number;
       contacts?: number;
       deals?: number;
+      tags?: number;
+      tasks?: number;
+      notes?: number;
+      calls?: number;
+      chats?: number;
+      messages?: number;
+      events?: number;
+      products?: number;
+      deal_products?: number;
+      deal_contacts?: number;
+      deal_companies?: number;
+      stage_transitions?: number;
+      deal_sources?: number;
+      custom_fields?: number;
+      custom_field_values?: number;
+    };
+    messages_coverage?: {
+      messages_imported?: number;
+      chats_seen?: number;
+      chats_matched?: number;
+      unmatched_chats?: number;
+      skipped_reason?: string | null;
     };
     completed_at?: string | null;
   };
@@ -273,6 +317,7 @@ export interface TokenAccount {
   balance_mtokens: number;
   reserved_mtokens: number;
   available_mtokens: number;
+  subscription_expires_at?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
 }
@@ -285,6 +330,8 @@ export interface FullExportTokenQuote {
   pricing_basis: string;
   estimated_deals: number;
   estimated_contacts: number;
+  estimated_records?: number;
+  estimated_duration_seconds?: number;
   estimated_tokens: number;
   estimated_mtokens: number;
   available_tokens: number;
@@ -350,6 +397,44 @@ export interface BillingLedgerEntry {
   currency: string;
   description: string;
   created_at: string;
+}
+
+export interface PayerCompany {
+  inn: string;
+  kpp?: string | null;
+  name: string;
+  ogrn?: string | null;
+  address?: string | null;
+}
+
+export interface DadataPartySuggestion extends PayerCompany {
+  value?: string | null;
+  unrestricted_value?: string | null;
+}
+
+export interface PaymentOrder {
+  id: string;
+  workspace_id: string;
+  provider: string;
+  method: 'card' | 'invoice';
+  purpose: 'token_topup' | 'subscription';
+  status: 'pending' | 'paid' | 'failed' | 'cancelled' | 'manual_review';
+  amount_cents: number;
+  currency: string;
+  token_amount_tokens: number;
+  plan_key?: string | null;
+  period_months?: number | null;
+  payment_url?: string | null;
+  invoice_number?: string | null;
+  payer?: PayerCompany | null;
+  created_at?: string | null;
+  paid_at?: string | null;
+}
+
+export interface PaymentCreateResponse {
+  order: PaymentOrder;
+  payment_url?: string | null;
+  message?: string;
 }
 
 export interface ApiErrorShape {

@@ -1,4 +1,4 @@
-# apps/api — Code9 FastAPI backend
+# apps/api — CODE9 FastAPI backend
 
 **Owner:** Backend Engineer.
 **Wave 1 (сейчас):** только `app/main.py` с `/` и `/health`, `pyproject.toml`.

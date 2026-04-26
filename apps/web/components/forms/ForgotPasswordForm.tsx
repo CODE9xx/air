@@ -22,16 +22,20 @@ export function ForgotPasswordForm() {
   const locale = useLocale();
   const { toast } = useToast();
   const [sent, setSent] = useState(false);
+  const [sentEmail, setSentEmail] = useState('');
 
   const {
     register,
+    getValues,
     handleSubmit,
     formState: { errors, isSubmitting },
   } = useForm<FormValues>({ resolver: zodResolver(schema) });
 
   const onSubmit = async (values: FormValues) => {
     try {
-      await api.post('/auth/password-reset/request', values, { scope: 'public' });
+      const email = values.email.trim().toLowerCase();
+      await api.post('/auth/password-reset/request', { email }, { scope: 'public' });
+      setSentEmail(email);
       setSent(true);
     } catch (err) {
       toast({ kind: 'error', title: rootT('common.error'), description: rootT(mapAuthErrorKey(err)) });
@@ -39,10 +43,14 @@ export function ForgotPasswordForm() {
   };
 
   if (sent) {
+    const email = sentEmail || getValues('email') || '';
     return (
       <div>
         <p className="text-sm text-muted-foreground">{t('sent')}</p>
-        <Link href={`/${locale}/reset-password`} className="mt-4 inline-block text-primary hover:underline">
+        <Link
+          href={`/${locale}/reset-password${email ? `?email=${encodeURIComponent(email)}` : ''}`}
+          className="mt-4 inline-block text-primary hover:underline"
+        >
           {rootT('common.continue')}
         </Link>
       </div>

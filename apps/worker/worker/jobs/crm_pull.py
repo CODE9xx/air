@@ -42,7 +42,7 @@ import os
 import re
 import uuid as uuid_mod
 from datetime import datetime, time, timedelta, timezone
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 from sqlalchemy import text
 
@@ -260,8 +260,9 @@ def _build_active_export_metadata(
     date_to_iso: str | None,
     pipeline_ids: list[str] | None,
     counts: dict[str, int],
+    messages_coverage: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    return {
+    payload = {
         "mode": "real",
         "date_basis": "created_at",
         "date_from": date_from_iso,
@@ -270,6 +271,9 @@ def _build_active_export_metadata(
         "counts": counts,
         "completed_at": datetime.now(tz=timezone.utc).isoformat(),
     }
+    if messages_coverage:
+        payload["messages_coverage"] = messages_coverage
+    return payload
 
 
 def _cleanup_trial_export_rows(sess, *, schema: str) -> None:
@@ -303,7 +307,29 @@ def _pipeline_filter_placeholders(
 
 
 def _tenant_table_count(sess, *, schema: str, table: str) -> int:
-    allowed = {"pipelines", "stages", "crm_users", "companies", "contacts", "deals"}
+    allowed = {
+        "pipelines",
+        "stages",
+        "crm_users",
+        "companies",
+        "contacts",
+        "deals",
+        "tags",
+        "products",
+        "deal_products",
+        "tasks",
+        "notes",
+        "calls",
+        "chats",
+        "messages",
+        "raw_events",
+        "deal_contacts",
+        "deal_companies",
+        "deal_stage_transitions",
+        "deal_sources",
+        "crm_custom_fields",
+        "crm_custom_field_values",
+    }
     if table not in allowed:
         raise ValueError(f"Unsupported tenant count table: {table}")
     q_schema = f'"{schema}"'
@@ -369,6 +395,29 @@ def _tenant_active_export_counts(
             created_from=created_from,
             created_to=created_to,
             pipeline_ids=pipeline_ids,
+        ),
+        "tags": _tenant_table_count(sess, schema=schema, table="tags"),
+        "products": _tenant_table_count(sess, schema=schema, table="products"),
+        "deal_products": _tenant_table_count(sess, schema=schema, table="deal_products"),
+        "tasks": _tenant_table_count(sess, schema=schema, table="tasks"),
+        "notes": _tenant_table_count(sess, schema=schema, table="notes"),
+        "calls": _tenant_table_count(sess, schema=schema, table="calls"),
+        "chats": _tenant_table_count(sess, schema=schema, table="chats"),
+        "messages": _tenant_table_count(sess, schema=schema, table="messages"),
+        "events": _tenant_table_count(sess, schema=schema, table="raw_events"),
+        "deal_contacts": _tenant_table_count(sess, schema=schema, table="deal_contacts"),
+        "deal_companies": _tenant_table_count(sess, schema=schema, table="deal_companies"),
+        "stage_transitions": _tenant_table_count(
+            sess,
+            schema=schema,
+            table="deal_stage_transitions",
+        ),
+        "deal_sources": _tenant_table_count(sess, schema=schema, table="deal_sources"),
+        "custom_fields": _tenant_table_count(sess, schema=schema, table="crm_custom_fields"),
+        "custom_field_values": _tenant_table_count(
+            sess,
+            schema=schema,
+            table="crm_custom_field_values",
         ),
     }
     if pipeline_ids:
@@ -436,12 +485,516 @@ def _upsert_raw(
 
 def _load_external_id_map(sess, *, schema: str, table: str) -> dict[str, str]:
     """Load tenant normalized row ids by external_id for FK resolution."""
-    allowed = {"pipelines", "stages", "crm_users", "companies", "contacts"}
+    allowed = {
+        "pipelines",
+        "stages",
+        "crm_users",
+        "companies",
+        "contacts",
+        "deals",
+        "tags",
+        "products",
+    }
     if table not in allowed:
         raise ValueError(f"Unsupported external_id map table: {table}")
     q_schema = f'"{schema}"'
     rows = sess.execute(text(f"SELECT external_id, id FROM {q_schema}.{table}")).fetchall()
     return {str(row[0]): str(row[1]) for row in rows if row[0] and row[1]}
+
+
+def _load_selected_deal_rows(
+    sess,
+    *,
+    schema: str,
+    created_from: datetime | None,
+    created_to: datetime | None,
+    pipeline_ids: list[str] | None,
+) -> list[tuple[str, str]]:
+    """Return selected deals as (external_id, tenant_uuid) for message import."""
+    q_schema = f'"{schema}"'
+    clauses = ["d.external_id IS NOT NULL"]
+    params: dict[str, Any] = {}
+    if created_from:
+        clauses.append("d.created_at_external >= :created_from")
+        params["created_from"] = created_from
+    if created_to:
+        clauses.append("d.created_at_external <= :created_to")
+        params["created_to"] = created_to
+    if pipeline_ids:
+        pipeline_placeholders, pipeline_params = _pipeline_filter_placeholders(
+            pipeline_ids,
+            prefix="message_pipeline",
+        )
+        clauses.append(f"p.external_id IN ({pipeline_placeholders})")
+        params.update(pipeline_params)
+    rows = sess.execute(
+        text(
+            f"SELECT d.external_id, d.id "
+            f"FROM {q_schema}.deals d "
+            f"LEFT JOIN {q_schema}.pipelines p ON p.id = d.pipeline_id "
+            f"WHERE {' AND '.join(clauses)} "
+            "ORDER BY d.created_at_external NULLS LAST, d.external_id"
+        ),
+        params,
+    ).fetchall()
+    return [(str(row[0]), str(row[1])) for row in rows if row[0] and row[1]]
+
+
+def _load_selected_contact_rows(
+    sess,
+    *,
+    schema: str,
+    created_from: datetime | None,
+    created_to: datetime | None,
+    pipeline_ids: list[str] | None,
+) -> list[tuple[str, str]]:
+    """Return contacts related to selected deals as (external_id, tenant_uuid)."""
+    q_schema = f'"{schema}"'
+    clauses = ["c.external_id IS NOT NULL"]
+    params: dict[str, Any] = {}
+    if created_from:
+        clauses.append("d.created_at_external >= :created_from")
+        params["created_from"] = created_from
+    if created_to:
+        clauses.append("d.created_at_external <= :created_to")
+        params["created_to"] = created_to
+    if pipeline_ids:
+        pipeline_placeholders, pipeline_params = _pipeline_filter_placeholders(
+            pipeline_ids,
+            prefix="contact_scope_pipeline",
+        )
+        clauses.append(f"p.external_id IN ({pipeline_placeholders})")
+        params.update(pipeline_params)
+    rows = sess.execute(
+        text(
+            f"SELECT DISTINCT c.external_id, c.id "
+            f"FROM {q_schema}.deals d "
+            f"LEFT JOIN {q_schema}.pipelines p ON p.id = d.pipeline_id "
+            f"LEFT JOIN {q_schema}.deal_contacts dc ON dc.deal_id = d.id "
+            f"LEFT JOIN {q_schema}.contacts c ON c.id = COALESCE(dc.contact_id, d.contact_id) "
+            f"WHERE {' AND '.join(clauses)} "
+            "ORDER BY c.external_id"
+        ),
+        params,
+    ).fetchall()
+    return [(str(row[0]), str(row[1])) for row in rows if row[0] and row[1]]
+
+
+def _catalog_element_external_id(element: dict[str, Any]) -> str | None:
+    element_id = element.get("id")
+    if element_id is None:
+        return None
+    catalog_id = element.get("catalog_id")
+    if catalog_id is None:
+        return str(element_id)
+    return f"{catalog_id}:{element_id}"
+
+
+def _float_or_none(value: Any) -> float | None:
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _json_dumps(value: Any) -> str:
+    return json.dumps(value if value is not None else {}, ensure_ascii=False, default=str)
+
+
+def _custom_field_text(values: Any) -> str | None:
+    if not isinstance(values, list) or not values:
+        return None
+    parts: list[str] = []
+    for item in values:
+        if not isinstance(item, dict):
+            continue
+        value = item.get("value")
+        if value is None:
+            continue
+        if isinstance(value, (dict, list)):
+            parts.append(json.dumps(value, ensure_ascii=False, default=str))
+        else:
+            parts.append(str(value))
+    text_value = ", ".join(part for part in parts if part.strip())
+    return text_value or None
+
+
+def _upsert_custom_field_def(
+    sess,
+    *,
+    schema: str,
+    entity_type: str,
+    field_external_id: str,
+    field_name: str | None,
+    field_code: str | None,
+    field_type: str | None,
+    raw_metadata: dict[str, Any],
+) -> str | None:
+    q_schema = f'"{schema}"'
+    result = sess.execute(
+        text(
+            f"INSERT INTO {q_schema}.crm_custom_fields("
+            "id, entity_type, external_id, name, code, field_type, raw_metadata, fetched_at"
+            ") VALUES (CAST(:id AS UUID), :entity_type, :external_id, :name, :code, "
+            ":field_type, CAST(:raw_metadata AS JSONB), NOW()) "
+            "ON CONFLICT (entity_type, external_id) DO UPDATE SET "
+            "  name = COALESCE(EXCLUDED.name, crm_custom_fields.name), "
+            "  code = COALESCE(EXCLUDED.code, crm_custom_fields.code), "
+            "  field_type = COALESCE(EXCLUDED.field_type, crm_custom_fields.field_type), "
+            "  raw_metadata = CASE WHEN EXCLUDED.raw_metadata = '{}'::jsonb "
+            "    THEN crm_custom_fields.raw_metadata ELSE EXCLUDED.raw_metadata END, "
+            "  fetched_at = NOW() "
+            "RETURNING id"
+        ),
+        {
+            "id": _uuid(),
+            "entity_type": entity_type,
+            "external_id": field_external_id,
+            "name": field_name,
+            "code": field_code,
+            "field_type": field_type,
+            "raw_metadata": _json_dumps(raw_metadata),
+        },
+    )
+    row = result.fetchone()
+    return str(row[0]) if row and row[0] else None
+
+
+def _sync_custom_field_values(
+    sess,
+    *,
+    schema: str,
+    entity_type: str,
+    entity_external_id: str,
+    payload: dict[str, Any],
+) -> int:
+    values = payload.get("custom_fields_values") if isinstance(payload, dict) else None
+    if not isinstance(values, list):
+        return 0
+    q_schema = f'"{schema}"'
+    processed = 0
+    for field in values:
+        if not isinstance(field, dict):
+            continue
+        field_id = field.get("field_id") or field.get("id")
+        if field_id is None:
+            continue
+        field_external_id = str(field_id)
+        field_name = field.get("field_name") or field.get("name")
+        field_code = field.get("field_code") or field.get("code")
+        field_type = field.get("field_type") or field.get("type")
+        custom_field_uuid = _upsert_custom_field_def(
+            sess,
+            schema=schema,
+            entity_type=entity_type,
+            field_external_id=field_external_id,
+            field_name=str(field_name) if field_name is not None else None,
+            field_code=str(field_code) if field_code is not None else None,
+            field_type=str(field_type) if field_type is not None else None,
+            raw_metadata=field,
+        )
+        sess.execute(
+            text(
+                f"INSERT INTO {q_schema}.crm_custom_field_values("
+                "id, entity_type, entity_external_id, custom_field_id, field_external_id, "
+                "field_name, value_text, value_json, fetched_at"
+                ") VALUES (CAST(:id AS UUID), :entity_type, :entity_external_id, "
+                "CAST(NULLIF(:custom_field_id, '') AS UUID), :field_external_id, "
+                ":field_name, :value_text, CAST(:value_json AS JSONB), NOW()) "
+                "ON CONFLICT (entity_type, entity_external_id, field_external_id) DO UPDATE SET "
+                "  custom_field_id = EXCLUDED.custom_field_id, "
+                "  field_name = EXCLUDED.field_name, "
+                "  value_text = EXCLUDED.value_text, "
+                "  value_json = EXCLUDED.value_json, fetched_at = NOW()"
+            ),
+            {
+                "id": _uuid(),
+                "entity_type": entity_type,
+                "entity_external_id": entity_external_id,
+                "custom_field_id": custom_field_uuid or "",
+                "field_external_id": field_external_id,
+                "field_name": str(field_name) if field_name is not None else None,
+                "value_text": _custom_field_text(field.get("values")),
+                "value_json": _json_dumps(field.get("values") if field.get("values") is not None else []),
+            },
+        )
+        processed += 1
+    return processed
+
+
+def _embedded_items(payload: dict[str, Any], key: str) -> list[dict[str, Any]]:
+    embedded = payload.get("_embedded") if isinstance(payload, dict) else None
+    items = embedded.get(key) if isinstance(embedded, dict) else None
+    return [item for item in items if isinstance(item, dict)] if isinstance(items, list) else []
+
+
+def _sync_deal_products(
+    sess,
+    *,
+    schema: str,
+    deal_uuid: str,
+    catalog_elements: list[Any],
+    product_map: dict[str, str] | None,
+) -> int:
+    """Sync amoCRM ``_embedded.catalog_elements`` for a normalized deal."""
+    q_schema = f'"{schema}"'
+    seen_external_ids: list[str] = []
+    processed = 0
+    for element in catalog_elements:
+        if not isinstance(element, dict):
+            continue
+        ext_id = _catalog_element_external_id(element)
+        if not ext_id:
+            continue
+        seen_external_ids.append(ext_id)
+        metadata = element.get("metadata")
+        if not isinstance(metadata, dict):
+            metadata = {}
+        catalog_id = element.get("catalog_id")
+        quantity = _float_or_none(element.get("quantity") or metadata.get("quantity"))
+        price = _float_or_none(
+            element.get("price")
+            or element.get("price_value")
+            or metadata.get("price")
+            or metadata.get("price_value")
+        )
+        price_cents = int(round(price * 100)) if price is not None else None
+        price_id = element.get("price_id") or metadata.get("price_id")
+        product_uuid = (product_map or {}).get(ext_id)
+        sess.execute(
+            text(
+                f"INSERT INTO {q_schema}.deal_products("
+                "deal_id, product_id, external_id, catalog_id, quantity, "
+                "price_cents, price_id, raw_metadata, fetched_at"
+                ") VALUES ("
+                "CAST(:deal_id AS UUID), CAST(NULLIF(:product_id, '') AS UUID), "
+                ":ext, :catalog_id, :quantity, :price, :price_id, "
+                "CAST(:raw_metadata AS JSONB), NOW()"
+                ") ON CONFLICT (deal_id, external_id) DO UPDATE SET "
+                "  product_id = COALESCE(EXCLUDED.product_id, deal_products.product_id), "
+                "  catalog_id = EXCLUDED.catalog_id, quantity = EXCLUDED.quantity, "
+                "  price_cents = EXCLUDED.price_cents, price_id = EXCLUDED.price_id, "
+                "  raw_metadata = EXCLUDED.raw_metadata, fetched_at = NOW()"
+            ),
+            {
+                "deal_id": deal_uuid,
+                "product_id": product_uuid or "",
+                "ext": ext_id,
+                "catalog_id": str(catalog_id) if catalog_id is not None else None,
+                "quantity": quantity,
+                "price": price_cents,
+                "price_id": str(price_id) if price_id is not None else None,
+                "raw_metadata": json.dumps(element, ensure_ascii=False, default=str),
+            },
+        )
+        processed += 1
+    if seen_external_ids:
+        params = {"deal_id": deal_uuid}
+        placeholders: list[str] = []
+        for idx, ext_id in enumerate(seen_external_ids):
+            key = f"linked_product_{idx}"
+            placeholders.append(f":{key}")
+            params[key] = ext_id
+        sess.execute(
+            text(
+                f"DELETE FROM {q_schema}.deal_products "
+                f"WHERE deal_id = CAST(:deal_id AS UUID) "
+                f"AND external_id NOT IN ({', '.join(placeholders)})"
+            ),
+            params,
+        )
+    else:
+        sess.execute(
+            text(
+                f"DELETE FROM {q_schema}.deal_products "
+                "WHERE deal_id = CAST(:deal_id AS UUID)"
+            ),
+            {"deal_id": deal_uuid},
+        )
+    return processed
+
+
+def _link_deal_products_to_products(sess, *, schema: str) -> int:
+    """Backfill product_id after catalog products have been imported."""
+    q_schema = f'"{schema}"'
+    value = sess.execute(
+        text(
+            f"UPDATE {q_schema}.deal_products dp "
+            f"SET product_id = p.id, fetched_at = NOW() "
+            f"FROM {q_schema}.products p "
+            "WHERE dp.external_id = p.external_id "
+            "AND (dp.product_id IS NULL OR dp.product_id <> p.id)"
+        )
+    ).rowcount
+    return int(value or 0)
+
+
+def _sync_deal_contacts(
+    sess,
+    *,
+    schema: str,
+    deal_uuid: str,
+    contact_map: dict[str, str],
+    contacts: list[dict[str, Any]],
+) -> int:
+    q_schema = f'"{schema}"'
+    sess.execute(
+        text(f"DELETE FROM {q_schema}.deal_contacts WHERE deal_id = CAST(:deal_id AS UUID)"),
+        {"deal_id": deal_uuid},
+    )
+    seen: set[str] = set()
+    for idx, contact in enumerate(contacts):
+        contact_id = contact.get("id")
+        contact_uuid = contact_map.get(str(contact_id)) if contact_id is not None else None
+        if not contact_uuid:
+            continue
+        seen.add(contact_uuid)
+        sess.execute(
+            text(
+                f"INSERT INTO {q_schema}.deal_contacts("
+                "deal_id, contact_id, is_primary, raw_metadata, fetched_at"
+                ") VALUES (CAST(:deal_id AS UUID), CAST(:contact_id AS UUID), "
+                ":is_primary, CAST(:raw_metadata AS JSONB), NOW()) "
+                "ON CONFLICT (deal_id, contact_id) DO UPDATE SET "
+                "  is_primary = EXCLUDED.is_primary, "
+                "  raw_metadata = EXCLUDED.raw_metadata, fetched_at = NOW()"
+            ),
+            {
+                "deal_id": deal_uuid,
+                "contact_id": contact_uuid,
+                "is_primary": idx == 0,
+                "raw_metadata": _json_dumps(contact),
+            },
+        )
+    return len(seen)
+
+
+def _sync_deal_companies(
+    sess,
+    *,
+    schema: str,
+    deal_uuid: str,
+    company_map: dict[str, str],
+    companies: list[dict[str, Any]],
+) -> int:
+    q_schema = f'"{schema}"'
+    sess.execute(
+        text(f"DELETE FROM {q_schema}.deal_companies WHERE deal_id = CAST(:deal_id AS UUID)"),
+        {"deal_id": deal_uuid},
+    )
+    processed = 0
+    for idx, company in enumerate(companies):
+        company_id = company.get("id")
+        company_uuid = company_map.get(str(company_id)) if company_id is not None else None
+        if not company_uuid:
+            continue
+        sess.execute(
+            text(
+                f"INSERT INTO {q_schema}.deal_companies("
+                "deal_id, company_id, is_primary, raw_metadata, fetched_at"
+                ") VALUES (CAST(:deal_id AS UUID), CAST(:company_id AS UUID), "
+                ":is_primary, CAST(:raw_metadata AS JSONB), NOW()) "
+                "ON CONFLICT (deal_id, company_id) DO UPDATE SET "
+                "  is_primary = EXCLUDED.is_primary, "
+                "  raw_metadata = EXCLUDED.raw_metadata, fetched_at = NOW()"
+            ),
+            {
+                "deal_id": deal_uuid,
+                "company_id": company_uuid,
+                "is_primary": idx == 0,
+                "raw_metadata": _json_dumps(company),
+            },
+        )
+        processed += 1
+    return processed
+
+
+def _sync_deal_source(
+    sess,
+    *,
+    schema: str,
+    deal_uuid: str,
+    payload: dict[str, Any],
+) -> int:
+    embedded = payload.get("_embedded") if isinstance(payload, dict) else None
+    source = embedded.get("source") if isinstance(embedded, dict) else None
+    custom_values = payload.get("custom_fields_values") if isinstance(payload, dict) else None
+    source_name = None
+    source_type = None
+    raw_metadata: dict[str, Any] = {}
+    if isinstance(source, dict):
+        source_name = source.get("name") or source.get("external_id")
+        source_type = source.get("type") or source.get("service")
+        raw_metadata["source"] = source
+
+    def field_hint(*names: str) -> str | None:
+        if not isinstance(custom_values, list):
+            return None
+        lowered = tuple(name.lower() for name in names)
+        for field in custom_values:
+            if not isinstance(field, dict):
+                continue
+            field_name = str(field.get("field_name") or field.get("name") or "").lower()
+            field_code = str(field.get("field_code") or field.get("code") or "").lower()
+            if not any(name in field_name or name in field_code for name in lowered):
+                continue
+            value = _custom_field_text(field.get("values"))
+            if value:
+                return value
+        return None
+
+    utm_source = field_hint("utm_source", "utm source")
+    utm_medium = field_hint("utm_medium", "utm medium")
+    utm_campaign = field_hint("utm_campaign", "utm campaign")
+    utm_content = field_hint("utm_content", "utm content")
+    utm_term = field_hint("utm_term", "utm term")
+
+    if not any([source_name, source_type, utm_source, utm_medium, utm_campaign, utm_content, utm_term]):
+        return 0
+    q_schema = f'"{schema}"'
+    sess.execute(
+        text(
+            f"INSERT INTO {q_schema}.deal_sources("
+            "deal_id, source_name, source_type, utm_source, utm_medium, utm_campaign, "
+            "utm_content, utm_term, raw_metadata, fetched_at"
+            ") VALUES (CAST(:deal_id AS UUID), :source_name, :source_type, :utm_source, "
+            ":utm_medium, :utm_campaign, :utm_content, :utm_term, "
+            "CAST(:raw_metadata AS JSONB), NOW()) "
+            "ON CONFLICT (deal_id) DO UPDATE SET "
+            "  source_name = EXCLUDED.source_name, source_type = EXCLUDED.source_type, "
+            "  utm_source = EXCLUDED.utm_source, utm_medium = EXCLUDED.utm_medium, "
+            "  utm_campaign = EXCLUDED.utm_campaign, utm_content = EXCLUDED.utm_content, "
+            "  utm_term = EXCLUDED.utm_term, raw_metadata = EXCLUDED.raw_metadata, "
+            "  fetched_at = NOW()"
+        ),
+        {
+            "deal_id": deal_uuid,
+            "source_name": str(source_name) if source_name is not None else None,
+            "source_type": str(source_type) if source_type is not None else None,
+            "utm_source": utm_source,
+            "utm_medium": utm_medium,
+            "utm_campaign": utm_campaign,
+            "utm_content": utm_content,
+            "utm_term": utm_term,
+            "raw_metadata": _json_dumps(raw_metadata),
+        },
+    )
+    return 1
+
+
+def _report_stage_items(
+    progress: Callable[[int], None] | None,
+    processed: int,
+    *,
+    every: int = 250,
+) -> None:
+    """Throttle DB writes while still giving the UI live row counters."""
+    if progress is None or processed <= 0:
+        return
+    if processed % every == 0:
+        progress(processed)
 
 
 # ---------------------------------------------------------------------------
@@ -583,11 +1136,13 @@ def _pull_companies(
     since: datetime | None,
     *,
     schema: str,
+    progress: Callable[[int], None] | None = None,
 ) -> dict[str, str]:
     """Тянет компании. Маппинг external_id → UUID. FK responsible_user_id → crm_users."""
     ext_to_uuid: dict[str, str] = {}
     q_schema = f'"{schema}"'
 
+    processed = 0
     for raw_c in connector.fetch_companies(access_token, since=since):
         ext_id = raw_c.crm_id
         if not ext_id:
@@ -623,6 +1178,17 @@ def _pull_companies(
         row = result.fetchone()
         if row and row[0]:
             ext_to_uuid[ext_id] = str(row[0])
+        _sync_custom_field_values(
+            sess,
+            schema=schema,
+            entity_type="company",
+            entity_external_id=ext_id,
+            payload=raw_c.raw_payload,
+        )
+        processed += 1
+        _report_stage_items(progress, processed)
+    if processed:
+        _report_stage_items(progress, processed, every=1)
     return ext_to_uuid
 
 
@@ -635,6 +1201,7 @@ def _pull_contacts(
     limit: int | None,
     *,
     schema: str,
+    progress: Callable[[int], None] | None = None,
 ) -> dict[str, str]:
     """Тянет контакты. Маппинг external_id → UUID. FK responsible_user_id → crm_users."""
     if limit == 0:
@@ -642,6 +1209,7 @@ def _pull_contacts(
     ext_to_uuid: dict[str, str] = {}
     q_schema = f'"{schema}"'
 
+    processed = 0
     for raw_c in connector.fetch_contacts(access_token, since=since, limit=limit):
         ext_id = raw_c.crm_id
         if not ext_id:
@@ -681,6 +1249,17 @@ def _pull_contacts(
         row = result.fetchone()
         if row and row[0]:
             ext_to_uuid[ext_id] = str(row[0])
+        _sync_custom_field_values(
+            sess,
+            schema=schema,
+            entity_type="contact",
+            entity_external_id=ext_id,
+            payload=raw_c.raw_payload,
+        )
+        processed += 1
+        _report_stage_items(progress, processed)
+    if processed:
+        _report_stage_items(progress, processed, every=1)
     return ext_to_uuid
 
 
@@ -700,6 +1279,8 @@ def _pull_deals(
     pipeline_ids: list[str] | None,
     limit: int | None,
     schema: str,
+    product_map: dict[str, str] | None = None,
+    progress: Callable[[int], None] | None = None,
 ) -> int:
     """
     Тянет сделки. Возвращает количество обработанных сделок.
@@ -707,6 +1288,27 @@ def _pull_deals(
     """
     processed = 0
     q_schema = f'"{schema}"'
+
+    def upsert_tag(tag: dict[str, Any]) -> str | None:
+        name = str(tag.get("name") or "").strip()
+        external = tag.get("id") or name
+        if not name or external is None:
+            return None
+        ext_id = str(external)
+        _upsert_raw(sess, schema, "raw_tags", ext_id, tag)
+        result = sess.execute(
+            text(
+                f"INSERT INTO {q_schema}.tags(id, external_id, name, fetched_at) "
+                "VALUES (CAST(:id AS UUID), :ext, :name, NOW()) "
+                "ON CONFLICT (external_id) DO UPDATE SET "
+                "  name = EXCLUDED.name, fetched_at = NOW() "
+                "RETURNING id"
+            ),
+            {"id": _uuid(), "ext": ext_id, "name": name},
+        )
+        row = result.fetchone()
+        return str(row[0]) if row and row[0] else None
+
     for raw_d in connector.fetch_deals(
         access_token,
         since=since,
@@ -731,7 +1333,7 @@ def _pull_deals(
             # amoCRM хранит цену в рублях (float) → умножаем на 100.
             price_cents = int(round(float(raw_d.price) * 100))
 
-        sess.execute(
+        result = sess.execute(
             text(
                 f"INSERT INTO {q_schema}.deals(id, external_id, name, pipeline_id, stage_id, status, "
                 "                  responsible_user_id, contact_id, company_id, price_cents, currency, "
@@ -751,7 +1353,8 @@ def _pull_deals(
                 "  company_id = EXCLUDED.company_id, currency = EXCLUDED.currency, "
                 "  created_at_external = EXCLUDED.created_at_external, "
                 "  updated_at_external = EXCLUDED.updated_at_external, "
-                "  closed_at_external = EXCLUDED.closed_at_external, fetched_at = NOW()"
+                "  closed_at_external = EXCLUDED.closed_at_external, fetched_at = NOW() "
+                "RETURNING id"
             ),
             {
                 "id": _uuid(),
@@ -770,8 +1373,707 @@ def _pull_deals(
                 "cla": raw_d.closed_at,
             },
         )
+        row = result.fetchone()
+        deal_uuid = str(row[0]) if row and row[0] else None
+        embedded = raw_d.raw_payload.get("_embedded") if isinstance(raw_d.raw_payload, dict) else {}
+        tags = embedded.get("tags") if isinstance(embedded, dict) else []
+        catalog_elements = (
+            embedded.get("catalog_elements") if isinstance(embedded, dict) else []
+        )
+        if deal_uuid and isinstance(tags, list):
+            for tag in tags:
+                if not isinstance(tag, dict):
+                    continue
+                tag_uuid = upsert_tag(tag)
+                if not tag_uuid:
+                    continue
+                sess.execute(
+                    text(
+                        f"INSERT INTO {q_schema}.deal_tags(deal_id, tag_id) "
+                        "VALUES (CAST(:deal_id AS UUID), CAST(:tag_id AS UUID)) "
+                        "ON CONFLICT DO NOTHING"
+                    ),
+                    {"deal_id": deal_uuid, "tag_id": tag_uuid},
+                )
+        if deal_uuid:
+            _sync_deal_contacts(
+                sess,
+                schema=schema,
+                deal_uuid=deal_uuid,
+                contact_map=contact_map,
+                contacts=_embedded_items(raw_d.raw_payload, "contacts"),
+            )
+            _sync_deal_companies(
+                sess,
+                schema=schema,
+                deal_uuid=deal_uuid,
+                company_map=company_map,
+                companies=_embedded_items(raw_d.raw_payload, "companies"),
+            )
+            _sync_deal_source(
+                sess,
+                schema=schema,
+                deal_uuid=deal_uuid,
+                payload=raw_d.raw_payload,
+            )
+            _sync_custom_field_values(
+                sess,
+                schema=schema,
+                entity_type="deal",
+                entity_external_id=ext_id,
+                payload=raw_d.raw_payload,
+            )
+        if deal_uuid and isinstance(catalog_elements, list):
+            _sync_deal_products(
+                sess,
+                schema=schema,
+                deal_uuid=deal_uuid,
+                catalog_elements=catalog_elements,
+                product_map=product_map,
+            )
+        processed += 1
+        _report_stage_items(progress, processed)
+    if processed:
+        _report_stage_items(progress, processed, every=1)
+    return processed
+
+
+def _pull_custom_fields(
+    sess,
+    connector,
+    access_token: str,
+    *,
+    schema: str,
+    progress: Callable[[int], None] | None = None,
+) -> int:
+    """Pull amoCRM custom field definitions for analytics field mapping."""
+    fetch_custom_fields = getattr(connector, "fetch_custom_fields", None)
+    if not callable(fetch_custom_fields):
+        return 0
+    processed = 0
+    for raw_f in fetch_custom_fields(access_token):
+        if not raw_f.crm_id:
+            continue
+        _upsert_custom_field_def(
+            sess,
+            schema=schema,
+            entity_type=raw_f.entity_type,
+            field_external_id=raw_f.crm_id,
+            field_name=raw_f.name,
+            field_code=raw_f.code,
+            field_type=raw_f.field_type,
+            raw_metadata=raw_f.raw_payload,
+        )
+        processed += 1
+        _report_stage_items(progress, processed)
+    if processed:
+        _report_stage_items(progress, processed, every=1)
+    return processed
+
+
+def _find_stage_external_id(value: Any) -> str | None:
+    """Best-effort recursive extraction of amoCRM status/stage id from event JSON."""
+    if isinstance(value, dict):
+        for key in ("status_id", "stage_id"):
+            if value.get(key) is not None:
+                return str(value.get(key))
+        lead_status = value.get("lead_status")
+        if isinstance(lead_status, dict):
+            for key in ("id", "status_id"):
+                if lead_status.get(key) is not None:
+                    return str(lead_status.get(key))
+        for item in value.values():
+            nested = _find_stage_external_id(item)
+            if nested:
+                return nested
+    if isinstance(value, list):
+        for item in value:
+            nested = _find_stage_external_id(item)
+            if nested:
+                return nested
+    return None
+
+
+def _event_stage_transition(payload: dict[str, Any]) -> tuple[str | None, str | None] | None:
+    event_type = str(payload.get("type") or payload.get("event_type") or "").lower()
+    before = payload.get("value_before")
+    after = payload.get("value_after")
+    from_stage = _find_stage_external_id(before)
+    to_stage = _find_stage_external_id(after)
+    if from_stage or to_stage:
+        return from_stage, to_stage
+    if any(part in event_type for part in ("status", "stage", "pipeline")):
+        return None, _find_stage_external_id(payload)
+    return None
+
+
+def _pull_stage_transitions(
+    sess,
+    *,
+    schema: str,
+    deal_map: dict[str, str],
+    stage_map: dict[str, str],
+    user_map: dict[str, str],
+) -> int:
+    """Normalize raw amoCRM events into deal stage transition rows."""
+    q_schema = f'"{schema}"'
+    rows = sess.execute(
+        text(
+            f"SELECT external_id, payload "
+            f"FROM {q_schema}.raw_events "
+            "WHERE payload->>'entity_type' IN ('lead', 'leads') "
+            "OR payload ? 'value_after' "
+            "OR payload ? 'value_before'"
+        )
+    ).fetchall()
+    processed = 0
+    for external_id, payload in rows:
+        if not isinstance(payload, dict):
+            continue
+        transition = _event_stage_transition(payload)
+        if transition is None:
+            continue
+        entity_id = payload.get("entity_id")
+        deal_uuid = deal_map.get(str(entity_id)) if entity_id is not None else None
+        if not deal_uuid:
+            continue
+        from_stage_ext, to_stage_ext = transition
+        from_stage_uuid = stage_map.get(str(from_stage_ext)) if from_stage_ext else None
+        to_stage_uuid = stage_map.get(str(to_stage_ext)) if to_stage_ext else None
+        if not from_stage_uuid and not to_stage_uuid:
+            continue
+        changed_by = payload.get("created_by")
+        changed_by_uuid = user_map.get(str(changed_by)) if changed_by is not None else None
+        created_at = None
+        created_raw = payload.get("created_at")
+        if isinstance(created_raw, (int, float)):
+            created_at = datetime.fromtimestamp(int(created_raw), tz=timezone.utc)
+        sess.execute(
+            text(
+                f"INSERT INTO {q_schema}.deal_stage_transitions("
+                "id, deal_id, event_external_id, from_stage_id, to_stage_id, "
+                "changed_by_user_id, changed_at_external, raw_metadata, fetched_at"
+                ") VALUES (CAST(:id AS UUID), CAST(:deal_id AS UUID), :event_external_id, "
+                "CAST(NULLIF(:from_stage_id, '') AS UUID), "
+                "CAST(NULLIF(:to_stage_id, '') AS UUID), "
+                "CAST(NULLIF(:changed_by_user_id, '') AS UUID), "
+                ":changed_at, CAST(:raw_metadata AS JSONB), NOW()) "
+                "ON CONFLICT (event_external_id) DO UPDATE SET "
+                "  deal_id = EXCLUDED.deal_id, from_stage_id = EXCLUDED.from_stage_id, "
+                "  to_stage_id = EXCLUDED.to_stage_id, "
+                "  changed_by_user_id = EXCLUDED.changed_by_user_id, "
+                "  changed_at_external = EXCLUDED.changed_at_external, "
+                "  raw_metadata = EXCLUDED.raw_metadata, fetched_at = NOW()"
+            ),
+            {
+                "id": _uuid(),
+                "deal_id": deal_uuid,
+                "event_external_id": str(external_id),
+                "from_stage_id": from_stage_uuid or "",
+                "to_stage_id": to_stage_uuid or "",
+                "changed_by_user_id": changed_by_uuid or "",
+                "changed_at": created_at,
+                "raw_metadata": _json_dumps(payload),
+            },
+        )
         processed += 1
     return processed
+
+
+def _pull_tasks(
+    sess,
+    connector,
+    access_token: str,
+    *,
+    user_map: dict[str, str],
+    deal_map: dict[str, str],
+    contact_map: dict[str, str],
+    since: datetime | None,
+    schema: str,
+    progress: Callable[[int], None] | None = None,
+) -> int:
+    """Pull amoCRM tasks into raw_tasks + normalized tasks."""
+    processed = 0
+    q_schema = f'"{schema}"'
+    for raw_t in connector.fetch_tasks(access_token, since=since):
+        ext_id = raw_t.crm_id
+        if not ext_id:
+            continue
+        _upsert_raw(sess, schema, "raw_tasks", ext_id, raw_t.raw_payload)
+        deal_uuid = deal_map.get(raw_t.deal_id) if raw_t.deal_id else None
+        contact_uuid = contact_map.get(raw_t.contact_id) if raw_t.contact_id else None
+        resp_uuid = user_map.get(raw_t.responsible_user_id) if raw_t.responsible_user_id else None
+        _ = contact_uuid
+        sess.execute(
+            text(
+                f"INSERT INTO {q_schema}.tasks(id, external_id, deal_id, responsible_user_id, "
+                "kind, text, is_completed, due_at_external, completed_at_external, fetched_at) "
+                "VALUES (CAST(:id AS UUID), :ext, CAST(NULLIF(:deal_id, '') AS UUID), "
+                "CAST(NULLIF(:user_id, '') AS UUID), :kind, :text_body, :completed, :due_at, :completed_at, NOW()) "
+                "ON CONFLICT (external_id) DO UPDATE SET "
+                "  deal_id = EXCLUDED.deal_id, responsible_user_id = EXCLUDED.responsible_user_id, "
+                "  kind = EXCLUDED.kind, text = EXCLUDED.text, is_completed = EXCLUDED.is_completed, "
+                "  due_at_external = EXCLUDED.due_at_external, "
+                "  completed_at_external = EXCLUDED.completed_at_external, fetched_at = NOW()"
+            ),
+            {
+                "id": _uuid(),
+                "ext": ext_id,
+                "deal_id": deal_uuid or "",
+                "user_id": resp_uuid or "",
+                "kind": raw_t.kind,
+                "text_body": raw_t.text,
+                "completed": bool(raw_t.is_completed),
+                "due_at": raw_t.due_at,
+                "completed_at": raw_t.completed_at,
+            },
+        )
+        _sync_custom_field_values(
+            sess,
+            schema=schema,
+            entity_type="task",
+            entity_external_id=ext_id,
+            payload=raw_t.raw_payload,
+        )
+        processed += 1
+        _report_stage_items(progress, processed)
+    if processed:
+        _report_stage_items(progress, processed, every=1)
+    return processed
+
+
+def _pull_products(
+    sess,
+    connector,
+    access_token: str,
+    *,
+    since: datetime | None,
+    schema: str,
+    progress: Callable[[int], None] | None = None,
+) -> int:
+    """Pull catalog/list elements into raw_products + normalized products."""
+    fetch_products = getattr(connector, "fetch_products", None)
+    if not callable(fetch_products):
+        return 0
+    processed = 0
+    q_schema = f'"{schema}"'
+    for raw_p in fetch_products(access_token, since=since):
+        ext_id = raw_p.crm_id
+        if not ext_id:
+            continue
+        _upsert_raw(sess, schema, "raw_products", ext_id, raw_p.raw_payload)
+        price_cents = int(round(float(raw_p.price) * 100)) if raw_p.price is not None else None
+        sess.execute(
+            text(
+                f"INSERT INTO {q_schema}.products(id, external_id, name, price_cents, currency, fetched_at) "
+                "VALUES (CAST(:id AS UUID), :ext, :name, :price, :currency, NOW()) "
+                "ON CONFLICT (external_id) DO UPDATE SET "
+                "  name = EXCLUDED.name, price_cents = EXCLUDED.price_cents, "
+                "  currency = EXCLUDED.currency, fetched_at = NOW()"
+            ),
+            {
+                "id": _uuid(),
+                "ext": ext_id,
+                "name": raw_p.name,
+                "price": price_cents,
+                "currency": raw_p.currency,
+            },
+        )
+        _sync_custom_field_values(
+            sess,
+            schema=schema,
+            entity_type="product",
+            entity_external_id=ext_id,
+            payload=raw_p.raw_payload,
+        )
+        processed += 1
+        _report_stage_items(progress, processed)
+    if processed:
+        _report_stage_items(progress, processed, every=1)
+    return processed
+
+
+def _call_values_from_note(payload: dict[str, Any]) -> dict[str, Any] | None:
+    note_type = str(payload.get("note_type") or "")
+    if note_type not in {"call_in", "call_out"}:
+        return None
+    params = payload.get("params") if isinstance(payload.get("params"), dict) else {}
+    return {
+        "direction": "in" if note_type == "call_in" else "out",
+        "duration": params.get("duration") or params.get("call_duration"),
+        "result": params.get("call_result") or params.get("result"),
+        "recording_url": params.get("link") or params.get("recording_url"),
+    }
+
+
+def _pull_notes(
+    sess,
+    connector,
+    access_token: str,
+    *,
+    user_map: dict[str, str],
+    deal_map: dict[str, str],
+    contact_map: dict[str, str],
+    since: datetime | None,
+    schema: str,
+    progress: Callable[[int], None] | None = None,
+) -> tuple[int, int]:
+    """Pull lead notes and normalize call notes into calls."""
+    processed = 0
+    calls_processed = 0
+    q_schema = f'"{schema}"'
+    for raw_n in connector.fetch_notes(access_token, since=since):
+        ext_id = raw_n.crm_id
+        if not ext_id:
+            continue
+        _upsert_raw(sess, schema, "raw_notes", ext_id, raw_n.raw_payload)
+        deal_uuid = deal_map.get(raw_n.deal_id) if raw_n.deal_id else None
+        contact_uuid = contact_map.get(raw_n.contact_id) if raw_n.contact_id else None
+        author_uuid = user_map.get(raw_n.author_user_id) if raw_n.author_user_id else None
+        sess.execute(
+            text(
+                f"INSERT INTO {q_schema}.notes(id, external_id, deal_id, contact_id, author_user_id, "
+                "body, created_at_external, fetched_at) "
+                "VALUES (CAST(:id AS UUID), :ext, CAST(NULLIF(:deal_id, '') AS UUID), "
+                "CAST(NULLIF(:contact_id, '') AS UUID), CAST(NULLIF(:author_id, '') AS UUID), "
+                ":body, :created_at, NOW()) "
+                "ON CONFLICT (external_id) DO UPDATE SET "
+                "  deal_id = EXCLUDED.deal_id, contact_id = EXCLUDED.contact_id, "
+                "  author_user_id = EXCLUDED.author_user_id, body = EXCLUDED.body, "
+                "  created_at_external = EXCLUDED.created_at_external, fetched_at = NOW()"
+            ),
+            {
+                "id": _uuid(),
+                "ext": ext_id,
+                "deal_id": deal_uuid or "",
+                "contact_id": contact_uuid or "",
+                "author_id": author_uuid or "",
+                "body": raw_n.body,
+                "created_at": raw_n.created_at,
+            },
+        )
+        if isinstance(raw_n.raw_payload, dict):
+            call_values = _call_values_from_note(raw_n.raw_payload)
+            if call_values is not None:
+                _upsert_raw(sess, schema, "raw_calls", ext_id, raw_n.raw_payload)
+                sess.execute(
+                    text(
+                        f"INSERT INTO {q_schema}.calls(id, external_id, deal_id, contact_id, user_id, "
+                        "direction, duration_sec, result, started_at_external, transcript_ref, fetched_at) "
+                        "VALUES (CAST(:id AS UUID), :ext, CAST(NULLIF(:deal_id, '') AS UUID), "
+                        "CAST(NULLIF(:contact_id, '') AS UUID), CAST(NULLIF(:user_id, '') AS UUID), "
+                        ":direction, :duration, :result, :started_at, CAST(:transcript AS JSONB), NOW()) "
+                        "ON CONFLICT (external_id) DO UPDATE SET "
+                        "  deal_id = EXCLUDED.deal_id, contact_id = EXCLUDED.contact_id, "
+                        "  user_id = EXCLUDED.user_id, direction = EXCLUDED.direction, "
+                        "  duration_sec = EXCLUDED.duration_sec, result = EXCLUDED.result, "
+                        "  started_at_external = EXCLUDED.started_at_external, "
+                        "  transcript_ref = EXCLUDED.transcript_ref, fetched_at = NOW()"
+                    ),
+                    {
+                        "id": _uuid(),
+                        "ext": ext_id,
+                        "deal_id": deal_uuid or "",
+                        "contact_id": contact_uuid or "",
+                        "user_id": author_uuid or "",
+                        "direction": call_values["direction"],
+                        "duration": _int_or_none(call_values.get("duration")),
+                        "result": call_values.get("result"),
+                        "started_at": raw_n.created_at,
+                        "transcript": json.dumps(
+                            {"recording_url": call_values.get("recording_url")},
+                            ensure_ascii=False,
+                        ),
+                    },
+                )
+                calls_processed += 1
+        processed += 1
+        _report_stage_items(progress, processed)
+    if processed:
+        _report_stage_items(progress, processed, every=1)
+    return processed, calls_processed
+
+
+def _pull_events(
+    sess,
+    connector,
+    access_token: str,
+    *,
+    since: datetime | None,
+    schema: str,
+    progress: Callable[[int], None] | None = None,
+) -> int:
+    """Pull raw amoCRM events for stage history and timeline analytics."""
+    processed = 0
+    for raw_e in connector.fetch_events(access_token, since=since):
+        ext_id = raw_e.crm_id
+        if not ext_id:
+            continue
+        _upsert_raw(sess, schema, "raw_events", ext_id, raw_e.raw_payload)
+        processed += 1
+        _report_stage_items(progress, processed)
+    if processed:
+        _report_stage_items(progress, processed, every=1)
+    return processed
+
+
+def _pull_timeline_messages(
+    sess,
+    connector,
+    access_token: str,
+    *,
+    user_map: dict[str, str],
+    contact_map: dict[str, str],
+    deal_rows: list[tuple[str, str]],
+    contact_rows: list[tuple[str, str]] | None = None,
+    created_from: datetime | None,
+    created_to: datetime | None,
+    schema: str,
+    progress: Callable[[int], None] | None = None,
+) -> tuple[int, int, dict[str, Any]]:
+    """Pull experimental amoCRM lead/contact timeline messages into chats/messages."""
+    fetch_deal_messages = getattr(connector, "fetch_lead_timeline_messages", None)
+    fetch_contact_messages = getattr(connector, "fetch_contact_timeline_messages", None)
+    if not callable(fetch_deal_messages) and not callable(fetch_contact_messages):
+        return 0, 0, {"skipped_reason": "timeline_fetcher_missing"}
+    q_schema = f'"{schema}"'
+    deal_uuid_by_external = {external_id: deal_uuid for external_id, deal_uuid in deal_rows}
+    contact_uuid_by_external = {
+        external_id: contact_uuid for external_id, contact_uuid in (contact_rows or [])
+    }
+    processed = 0
+    seen_chats: set[str] = set()
+    skipped: list[str] = []
+
+    def upsert_message(raw_m) -> None:
+        nonlocal processed
+        ext_id = raw_m.crm_id
+        if not ext_id:
+            return
+        _upsert_raw(sess, schema, "raw_messages", ext_id, raw_m.raw_payload)
+        deal_uuid = deal_uuid_by_external.get(raw_m.deal_id or "")
+        contact_uuid = (
+            contact_uuid_by_external.get(raw_m.contact_id or "")
+            or contact_map.get(raw_m.contact_id)
+            if raw_m.contact_id
+            else None
+        )
+        author_uuid = user_map.get(raw_m.author_user_id) if raw_m.author_user_id else None
+        chat_external_id = raw_m.chat_id or f"deal:{raw_m.deal_id or 'contact:' + str(raw_m.contact_id or ext_id)}"
+        seen_chats.add(chat_external_id)
+        _upsert_raw(
+            sess,
+            schema,
+            "raw_chats",
+            chat_external_id,
+            {
+                "external_id": chat_external_id,
+                "deal_id": raw_m.deal_id,
+                "contact_id": raw_m.contact_id,
+                "channel": raw_m.channel,
+                "source": "amocrm_ajax_events_timeline",
+            },
+        )
+        chat_result = sess.execute(
+            text(
+                f"INSERT INTO {q_schema}.chats(id, external_id, channel, deal_id, contact_id, "
+                "started_at_external, fetched_at) "
+                "VALUES (CAST(:id AS UUID), :ext, :channel, CAST(NULLIF(:deal_id, '') AS UUID), "
+                "CAST(NULLIF(:contact_id, '') AS UUID), :started_at, NOW()) "
+                "ON CONFLICT (external_id) DO UPDATE SET "
+                "  channel = EXCLUDED.channel, deal_id = COALESCE(EXCLUDED.deal_id, chats.deal_id), "
+                "  contact_id = COALESCE(EXCLUDED.contact_id, chats.contact_id), "
+                "  started_at_external = COALESCE(chats.started_at_external, EXCLUDED.started_at_external), "
+                "  fetched_at = NOW() "
+                "RETURNING id"
+            ),
+            {
+                "id": _uuid(),
+                "ext": chat_external_id,
+                "channel": raw_m.channel,
+                "deal_id": deal_uuid or "",
+                "contact_id": contact_uuid or "",
+                "started_at": raw_m.sent_at,
+            },
+        )
+        chat_row = chat_result.fetchone()
+        chat_uuid = str(chat_row[0]) if chat_row and chat_row[0] else None
+        author_kind = raw_m.author_kind if raw_m.author_kind in {"user", "client", "system"} else "system"
+        sess.execute(
+            text(
+                f"INSERT INTO {q_schema}.messages(id, external_id, chat_id, author_kind, "
+                "author_user_id, text, sent_at_external, fetched_at) "
+                "VALUES (CAST(:id AS UUID), :ext, CAST(NULLIF(:chat_id, '') AS UUID), "
+                ":author_kind, CAST(NULLIF(:author_id, '') AS UUID), :text_body, :sent_at, NOW()) "
+                "ON CONFLICT (external_id) DO UPDATE SET "
+                "  chat_id = EXCLUDED.chat_id, author_kind = EXCLUDED.author_kind, "
+                "  author_user_id = EXCLUDED.author_user_id, text = EXCLUDED.text, "
+                "  sent_at_external = EXCLUDED.sent_at_external, fetched_at = NOW()"
+            ),
+            {
+                "id": _uuid(),
+                "ext": ext_id,
+                "chat_id": chat_uuid or "",
+                "author_kind": author_kind,
+                "author_id": author_uuid or "",
+                "text_body": raw_m.text,
+                "sent_at": raw_m.sent_at,
+            },
+        )
+        processed += 1
+        _report_stage_items(progress, processed)
+
+    try:
+        if callable(fetch_deal_messages) and deal_rows:
+            for raw_m in fetch_deal_messages(
+                access_token,
+                [external_id for external_id, _ in deal_rows],
+                created_from=created_from,
+                created_to=created_to,
+            ):
+                upsert_message(raw_m)
+    except Exception as exc:
+        logger.warning(
+            "amocrm_timeline_messages_import_skipped",
+            extra={"schema": schema, "scope": "deals", "error_type": type(exc).__name__},
+        )
+        skipped.append(f"deals:{type(exc).__name__}")
+
+    try:
+        if callable(fetch_contact_messages) and contact_rows:
+            for raw_m in fetch_contact_messages(
+                access_token,
+                [external_id for external_id, _ in contact_rows],
+                created_from=created_from,
+                created_to=created_to,
+            ):
+                upsert_message(raw_m)
+    except Exception as exc:
+        logger.warning(
+            "amocrm_timeline_messages_import_skipped",
+            extra={"schema": schema, "scope": "contacts", "error_type": type(exc).__name__},
+        )
+        skipped.append(f"contacts:{type(exc).__name__}")
+
+    inbox_coverage = _pull_inbox_chats_best_effort(
+        sess,
+        connector,
+        access_token,
+        schema=schema,
+        deal_uuid_by_external=deal_uuid_by_external,
+        contact_uuid_by_external=contact_uuid_by_external,
+        created_from=created_from,
+        created_to=created_to,
+    )
+
+    if processed:
+        _report_stage_items(progress, processed, every=1)
+    coverage = {
+        "messages_imported": processed,
+        "chats_seen": len(seen_chats) + int(inbox_coverage.get("chats_seen", 0)),
+        "chats_matched": int(inbox_coverage.get("chats_matched", 0)),
+        "unmatched_chats": int(inbox_coverage.get("unmatched_chats", 0)),
+        "skipped_reason": ";".join(skipped) if skipped else inbox_coverage.get("skipped_reason"),
+    }
+    return processed, len(seen_chats), coverage
+
+
+def _pull_inbox_chats_best_effort(
+    sess,
+    connector,
+    access_token: str,
+    *,
+    schema: str,
+    deal_uuid_by_external: dict[str, str],
+    contact_uuid_by_external: dict[str, str],
+    created_from: datetime | None,
+    created_to: datetime | None,
+) -> dict[str, Any]:
+    """Scan amoCRM inbox list and keep only chats matched to selected scope."""
+    fetch_inbox_chats = getattr(connector, "fetch_inbox_chats", None)
+    if not callable(fetch_inbox_chats):
+        return {"skipped_reason": "inbox_fetcher_missing", "chats_seen": 0, "chats_matched": 0, "unmatched_chats": 0}
+    q_schema = f'"{schema}"'
+    seen = 0
+    matched = 0
+    unmatched = 0
+    try:
+        for chat in fetch_inbox_chats(
+            access_token,
+            created_from=created_from,
+            created_to=created_to,
+        ):
+            if not isinstance(chat, dict):
+                continue
+            seen += 1
+            chat_id = (
+                chat.get("id")
+                or chat.get("talk_id")
+                or chat.get("conversation_id")
+                or chat.get("chat_id")
+            )
+            if chat_id is None:
+                unmatched += 1
+                continue
+            entity_obj = chat.get("entity") if isinstance(chat.get("entity"), dict) else {}
+            contact_obj = chat.get("contact") if isinstance(chat.get("contact"), dict) else {}
+            deal_external_id = chat.get("lead_id") or chat.get("entity_id") or entity_obj.get("id")
+            contact_external_id = chat.get("contact_id") or contact_obj.get("id")
+            deal_uuid = deal_uuid_by_external.get(str(deal_external_id)) if deal_external_id else None
+            contact_uuid = (
+                contact_uuid_by_external.get(str(contact_external_id))
+                if contact_external_id
+                else None
+            )
+            if not deal_uuid and not contact_uuid:
+                unmatched += 1
+                continue
+            matched += 1
+            chat_external_id = str(chat_id)
+            _upsert_raw(sess, schema, "raw_chats", chat_external_id, chat)
+            sess.execute(
+                text(
+                    f"INSERT INTO {q_schema}.chats(id, external_id, channel, deal_id, contact_id, "
+                    "started_at_external, fetched_at) "
+                    "VALUES (CAST(:id AS UUID), :ext, :channel, CAST(NULLIF(:deal_id, '') AS UUID), "
+                    "CAST(NULLIF(:contact_id, '') AS UUID), :started_at, NOW()) "
+                    "ON CONFLICT (external_id) DO UPDATE SET "
+                    "  channel = EXCLUDED.channel, deal_id = COALESCE(EXCLUDED.deal_id, chats.deal_id), "
+                    "  contact_id = COALESCE(EXCLUDED.contact_id, chats.contact_id), "
+                    "  started_at_external = COALESCE(chats.started_at_external, EXCLUDED.started_at_external), "
+                    "  fetched_at = NOW() "
+                    "RETURNING id"
+                ),
+                {
+                    "id": _uuid(),
+                    "ext": chat_external_id,
+                    "channel": str(chat.get("channel") or chat.get("source") or "amocrm"),
+                    "deal_id": deal_uuid or "",
+                    "contact_id": contact_uuid or "",
+                    "started_at": None,
+                },
+            )
+    except Exception as exc:
+        logger.warning(
+            "amocrm_inbox_chat_import_skipped",
+            extra={"schema": schema, "error_type": type(exc).__name__},
+        )
+        return {
+            "skipped_reason": f"inbox:{type(exc).__name__}",
+            "chats_seen": seen,
+            "chats_matched": matched,
+            "unmatched_chats": unmatched,
+        }
+    return {"chats_seen": seen, "chats_matched": matched, "unmatched_chats": unmatched}
+
+
+def _int_or_none(value: Any) -> int | None:
+    try:
+        if value is None:
+            return None
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -941,6 +2243,8 @@ def pull_amocrm_core(
 
         q_schema = f'"{schema}"'
         counts: dict[str, int] = {}
+        messages_coverage: dict[str, Any] = {}
+        total_steps = 6 if first_pull else 16
 
         with sync_session() as sess:
             # Task #52.7: schema qualified в каждом INSERT внутри _pull_*
@@ -968,7 +2272,7 @@ def pull_amocrm_core(
                 job_row_id,
                 stage="pipelines",
                 completed_steps=1,
-                total_steps=6,
+                total_steps=total_steps,
                 counts=counts,
             )
 
@@ -984,7 +2288,7 @@ def pull_amocrm_core(
                 job_row_id,
                 stage="stages",
                 completed_steps=2,
-                total_steps=6,
+                total_steps=total_steps,
                 counts=counts,
             )
 
@@ -998,7 +2302,7 @@ def pull_amocrm_core(
                 job_row_id,
                 stage="users",
                 completed_steps=3,
-                total_steps=6,
+                total_steps=total_steps,
                 counts=counts,
             )
 
@@ -1009,6 +2313,13 @@ def pull_amocrm_core(
                 user_map,
                 since,
                 schema=schema,
+                progress=lambda n: update_job_progress(
+                    job_row_id,
+                    stage="companies",
+                    completed_steps=3,
+                    total_steps=total_steps,
+                    counts={**counts, "companies_imported": n},
+                ),
             )
             company_map = _load_external_id_map(sess, schema=schema, table="companies")
             counts["companies"] = len(company_map)
@@ -1020,7 +2331,7 @@ def pull_amocrm_core(
                 job_row_id,
                 stage="companies",
                 completed_steps=4,
-                total_steps=6,
+                total_steps=total_steps,
                 counts=counts,
             )
 
@@ -1032,6 +2343,13 @@ def pull_amocrm_core(
                 since,
                 contacts_limit,
                 schema=schema,
+                progress=lambda n: update_job_progress(
+                    job_row_id,
+                    stage="contacts",
+                    completed_steps=4,
+                    total_steps=total_steps,
+                    counts={**counts, "contacts_imported": n},
+                ),
             )
             contact_map = _load_external_id_map(sess, schema=schema, table="contacts")
             counts["contacts"] = len(contact_map)
@@ -1043,7 +2361,7 @@ def pull_amocrm_core(
                 job_row_id,
                 stage="contacts",
                 completed_steps=5,
-                total_steps=6,
+                total_steps=total_steps,
                 counts=counts,
             )
 
@@ -1062,6 +2380,13 @@ def pull_amocrm_core(
                 pipeline_ids=selected_pipeline_ids,
                 limit=deals_limit,
                 schema=schema,
+                progress=lambda n: update_job_progress(
+                    job_row_id,
+                    stage="deals",
+                    completed_steps=5,
+                    total_steps=total_steps,
+                    counts={**counts, "deals_imported": n},
+                ),
             )
             print(
                 f"[pull_amocrm_core] schema={schema} deals_processed={deals_processed}",
@@ -1071,9 +2396,276 @@ def pull_amocrm_core(
                 job_row_id,
                 stage="deals",
                 completed_steps=6,
-                total_steps=6,
+                total_steps=total_steps,
                 counts={**counts, "deals_processed": deals_processed},
             )
+
+            if not first_pull:
+                deal_map = _load_external_id_map(sess, schema=schema, table="deals")
+                tags_count = _tenant_table_count(sess, schema=schema, table="tags")
+                counts["tags"] = tags_count
+                counts["deal_contacts"] = _tenant_table_count(
+                    sess,
+                    schema=schema,
+                    table="deal_contacts",
+                )
+                counts["deal_companies"] = _tenant_table_count(
+                    sess,
+                    schema=schema,
+                    table="deal_companies",
+                )
+                counts["deal_sources"] = _tenant_table_count(
+                    sess,
+                    schema=schema,
+                    table="deal_sources",
+                )
+
+                selected_deal_rows = _load_selected_deal_rows(
+                    sess,
+                    schema=schema,
+                    created_from=created_from,
+                    created_to=created_to,
+                    pipeline_ids=selected_pipeline_ids,
+                )
+                selected_contact_rows = _load_selected_contact_rows(
+                    sess,
+                    schema=schema,
+                    created_from=created_from,
+                    created_to=created_to,
+                    pipeline_ids=selected_pipeline_ids,
+                )
+                update_job_progress(
+                    job_row_id,
+                    stage="contacts_scope",
+                    completed_steps=7,
+                    total_steps=total_steps,
+                    counts={
+                        **counts,
+                        "selected_deals": len(selected_deal_rows),
+                        "selected_contacts": len(selected_contact_rows),
+                    },
+                )
+
+                try:
+                    custom_fields_processed = _pull_custom_fields(
+                        sess,
+                        connector,
+                        access_token,
+                        schema=schema,
+                        progress=lambda n: update_job_progress(
+                            job_row_id,
+                            stage="custom_fields",
+                            completed_steps=7,
+                            total_steps=total_steps,
+                            counts={**counts, "custom_fields_imported": n},
+                        ),
+                    )
+                except Exception as exc:
+                    custom_fields_processed = 0
+                    logger.warning(
+                        "amocrm_custom_fields_import_skipped",
+                        extra={"schema": schema, "error_type": type(exc).__name__},
+                    )
+                counts["custom_fields"] = _tenant_table_count(
+                    sess,
+                    schema=schema,
+                    table="crm_custom_fields",
+                )
+                counts["custom_field_values"] = _tenant_table_count(
+                    sess,
+                    schema=schema,
+                    table="crm_custom_field_values",
+                )
+                update_job_progress(
+                    job_row_id,
+                    stage="custom_fields",
+                    completed_steps=8,
+                    total_steps=total_steps,
+                    counts={
+                        **counts,
+                        "custom_fields_processed": custom_fields_processed,
+                    },
+                )
+
+                update_job_progress(
+                    job_row_id,
+                    stage="sources",
+                    completed_steps=9,
+                    total_steps=total_steps,
+                    counts=counts,
+                )
+
+                products_processed = _pull_products(
+                    sess,
+                    connector,
+                    access_token,
+                    since=since,
+                    schema=schema,
+                    progress=lambda n: update_job_progress(
+                        job_row_id,
+                        stage="products",
+                        completed_steps=9,
+                        total_steps=total_steps,
+                        counts={**counts, "products_imported": n},
+                    ),
+                )
+                counts["products"] = _tenant_table_count(sess, schema=schema, table="products")
+                linked_product_rows = _link_deal_products_to_products(sess, schema=schema)
+                counts["deal_products"] = _tenant_table_count(
+                    sess,
+                    schema=schema,
+                    table="deal_products",
+                )
+                update_job_progress(
+                    job_row_id,
+                    stage="products",
+                    completed_steps=10,
+                    total_steps=total_steps,
+                    counts={
+                        **counts,
+                        "products_processed": products_processed,
+                        "deal_products_linked": linked_product_rows,
+                    },
+                )
+
+                tasks_processed = _pull_tasks(
+                    sess,
+                    connector,
+                    access_token,
+                    user_map=user_map,
+                    deal_map=deal_map,
+                    contact_map=contact_map,
+                    since=since,
+                    schema=schema,
+                    progress=lambda n: update_job_progress(
+                        job_row_id,
+                        stage="tasks",
+                        completed_steps=10,
+                        total_steps=total_steps,
+                        counts={**counts, "tasks_imported": n},
+                    ),
+                )
+                counts["tasks"] = _tenant_table_count(sess, schema=schema, table="tasks")
+                update_job_progress(
+                    job_row_id,
+                    stage="tasks_enriched",
+                    completed_steps=11,
+                    total_steps=total_steps,
+                    counts={**counts, "tasks_processed": tasks_processed},
+                )
+
+                notes_processed, calls_processed = _pull_notes(
+                    sess,
+                    connector,
+                    access_token,
+                    user_map=user_map,
+                    deal_map=deal_map,
+                    contact_map=contact_map,
+                    since=since,
+                    schema=schema,
+                    progress=lambda n: update_job_progress(
+                        job_row_id,
+                        stage="notes",
+                        completed_steps=11,
+                        total_steps=total_steps,
+                        counts={**counts, "notes_imported": n},
+                    ),
+                )
+                counts["notes"] = _tenant_table_count(sess, schema=schema, table="notes")
+                counts["calls"] = _tenant_table_count(sess, schema=schema, table="calls")
+                update_job_progress(
+                    job_row_id,
+                    stage="notes",
+                    completed_steps=12,
+                    total_steps=total_steps,
+                    counts={
+                        **counts,
+                        "notes_processed": notes_processed,
+                        "calls_processed": calls_processed,
+                    },
+                )
+
+                messages_processed, chats_processed, messages_coverage = _pull_timeline_messages(
+                    sess,
+                    connector,
+                    access_token,
+                    user_map=user_map,
+                    contact_map=contact_map,
+                    deal_rows=selected_deal_rows,
+                    contact_rows=selected_contact_rows,
+                    created_from=created_from,
+                    created_to=created_to,
+                    schema=schema,
+                    progress=lambda n: update_job_progress(
+                        job_row_id,
+                        stage="messages",
+                        completed_steps=12,
+                        total_steps=total_steps,
+                        counts={**counts, "messages_imported": n},
+                    ),
+                )
+                counts["chats"] = _tenant_table_count(sess, schema=schema, table="chats")
+                counts["messages"] = _tenant_table_count(sess, schema=schema, table="messages")
+                update_job_progress(
+                    job_row_id,
+                    stage="messages",
+                    completed_steps=13,
+                    total_steps=total_steps,
+                    counts={
+                        **counts,
+                        "messages_processed": messages_processed,
+                        "chats_processed": chats_processed,
+                        "messages_chats_seen": int(messages_coverage.get("chats_seen", 0) or 0),
+                        "messages_chats_matched": int(messages_coverage.get("chats_matched", 0) or 0),
+                        "messages_unmatched_chats": int(messages_coverage.get("unmatched_chats", 0) or 0),
+                    },
+                )
+
+                events_processed = _pull_events(
+                    sess,
+                    connector,
+                    access_token,
+                    since=since,
+                    schema=schema,
+                    progress=lambda n: update_job_progress(
+                        job_row_id,
+                        stage="events",
+                        completed_steps=13,
+                        total_steps=total_steps,
+                        counts={**counts, "events_imported": n},
+                    ),
+                )
+                counts["events"] = _tenant_table_count(sess, schema=schema, table="raw_events")
+                update_job_progress(
+                    job_row_id,
+                    stage="events",
+                    completed_steps=14,
+                    total_steps=total_steps,
+                    counts={**counts, "events_processed": events_processed},
+                )
+
+                stage_transitions_processed = _pull_stage_transitions(
+                    sess,
+                    schema=schema,
+                    deal_map=deal_map,
+                    stage_map=stage_map,
+                    user_map=user_map,
+                )
+                counts["stage_transitions"] = _tenant_table_count(
+                    sess,
+                    schema=schema,
+                    table="deal_stage_transitions",
+                )
+                update_job_progress(
+                    job_row_id,
+                    stage="stage_transitions",
+                    completed_steps=16,
+                    total_steps=total_steps,
+                    counts={
+                        **counts,
+                        "stage_transitions_processed": stage_transitions_processed,
+                    },
+                )
 
             counts = _tenant_active_export_counts(
                 sess,
@@ -1103,6 +2695,7 @@ def pull_amocrm_core(
                 date_to_iso=effective_date_to_iso,
                 pipeline_ids=selected_pipeline_ids,
                 counts=counts,
+                messages_coverage=messages_coverage,
             ),
         }
         if auto_sync:

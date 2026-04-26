@@ -42,6 +42,8 @@ Security:
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import hashlib
+import json
 import os
 import time
 from typing import Any, Iterable, Optional
@@ -54,10 +56,13 @@ from .base import (
     RawCall,
     RawCompany,
     RawContact,
+    RawCustomField,
     RawDeal,
+    RawEvent,
     RawMessage,
     RawNote,
     RawPipeline,
+    RawProduct,
     RawStage,
     RawTask,
     RawUser,
@@ -175,6 +180,15 @@ class AmoCrmConnector(CRMConnector):
                 provider=self.provider.value,
             )
         return f"https://{self._subdomain}.amocrm.ru/api/v4/{path.lstrip('/')}"
+
+    def _account_url(self, path: str) -> str:
+        """URL for account web/AJAX endpoints. Experimental, backend-only."""
+        if not self._subdomain:
+            raise ProviderError(
+                "AmoCrmConnector: subdomain не задан — account endpoint вызвать невозможно.",
+                provider=self.provider.value,
+            )
+        return f"https://{self._subdomain}.amocrm.ru/{path.lstrip('/')}"
 
     def _token_pair_from_response(
         self, data: dict[str, Any]
@@ -481,6 +495,240 @@ class AmoCrmConnector(CRMConnector):
                     # next.href уже с query string — не дублируем params.
                     current_params = None
 
+    def _ajax_get(
+        self,
+        path: str,
+        access_token: str,
+        *,
+        params: dict[str, Any] | None = None,
+    ) -> Any:
+        """Backend-only experimental amoCRM AJAX GET with OAuth bearer token."""
+        url = self._account_url(path)
+        with httpx.Client(timeout=self._http_timeout) as client:
+            last_request_error: httpx.RequestError | None = None
+            for attempt in range(1, _PAGINATED_GET_MAX_ATTEMPTS + 1):
+                try:
+                    self._throttle_api_request()
+                    response = client.get(
+                        url,
+                        params=params,
+                        headers={
+                            "Authorization": f"Bearer {access_token}",
+                            "Accept": "application/json",
+                            "X-Requested-With": "XMLHttpRequest",
+                            "User-Agent": "code9-analytics/1.0",
+                        },
+                    )
+                except httpx.RequestError as exc:
+                    last_request_error = exc
+                    if attempt >= _PAGINATED_GET_MAX_ATTEMPTS:
+                        raise ProviderError(
+                            f"amoCRM AJAX endpoint unreachable after "
+                            f"{_PAGINATED_GET_MAX_ATTEMPTS} attempts: "
+                            f"{type(exc).__name__}",
+                            provider=self.provider.value,
+                        ) from None
+                    time.sleep(_PAGINATED_GET_RETRY_BASE_SECONDS * (2 ** (attempt - 1)))
+                    continue
+
+                if response.status_code == 204:
+                    return {}
+                try:
+                    body: Any = response.json()
+                except ValueError:
+                    body = {"text": response.text[:500]}
+                if (response.status_code == 429 or response.status_code >= 500) and (
+                    attempt < _PAGINATED_GET_MAX_ATTEMPTS
+                ):
+                    time.sleep(self._retry_after_seconds(response, body, attempt))
+                    continue
+                self._raise_for_status(response.status_code, body)
+                if response.status_code // 100 != 2:
+                    raise ProviderError(
+                        f"amoCRM AJAX endpoint returned {response.status_code}",
+                        provider=self.provider.value,
+                        status_code=response.status_code,
+                        payload={"type": type(body).__name__},
+                    )
+                return body
+
+        exc_name = type(last_request_error).__name__ if last_request_error else "unknown"
+        raise ProviderError(
+            f"amoCRM AJAX endpoint unreachable: {exc_name}",
+            provider=self.provider.value,
+        )
+
+    @staticmethod
+    def _timeline_lists(body: Any) -> list[list[Any]]:
+        if isinstance(body, list):
+            return [body]
+        if not isinstance(body, dict):
+            return []
+        lists: list[list[Any]] = []
+        for key in ("items", "events", "timeline", "messages", "notes"):
+            value = body.get(key)
+            if isinstance(value, list):
+                lists.append(value)
+        embedded = body.get("_embedded")
+        if isinstance(embedded, dict):
+            for key in ("items", "events", "timeline", "messages", "notes"):
+                value = embedded.get(key)
+                if isinstance(value, list):
+                    lists.append(value)
+        response = body.get("response")
+        if isinstance(response, dict):
+            lists.extend(AmoCrmConnector._timeline_lists(response))
+        return lists
+
+    @staticmethod
+    def _message_text(payload: dict[str, Any]) -> str | None:
+        for key in ("text", "body", "message_text"):
+            value = payload.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        message = payload.get("message")
+        if isinstance(message, str) and message.strip():
+            return message.strip()
+        if isinstance(message, dict):
+            for key in ("text", "caption", "body"):
+                value = message.get(key)
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+        params = payload.get("params")
+        if isinstance(params, dict):
+            for key in ("text", "message", "body"):
+                value = params.get(key)
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+        return None
+
+    @staticmethod
+    def _is_message_timeline_item(payload: dict[str, Any]) -> bool:
+        haystack = " ".join(
+            str(payload.get(key) or "")
+            for key in ("type", "event_type", "note_type", "action", "entity", "name")
+        ).lower()
+        if any(part in haystack for part in ("message", "chat", "imbox", "inbox", "mail")):
+            return True
+        if isinstance(payload.get("message"), (dict, str)):
+            return True
+        if any(payload.get(key) for key in ("chat_id", "talk_id", "conversation_id", "msgid")):
+            return True
+        return False
+
+    @staticmethod
+    def _timeline_item_id(deal_id: str, payload: dict[str, Any]) -> str:
+        for key in ("id", "event_id", "message_id", "msgid", "uuid"):
+            value = payload.get(key)
+            if value is not None:
+                return f"{deal_id}:{value}"
+        digest = hashlib.sha256(
+            json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")
+        ).hexdigest()[:24]
+        return f"{deal_id}:timeline:{digest}"
+
+    @staticmethod
+    def _timeline_chat_id(deal_id: str, payload: dict[str, Any]) -> str:
+        for key in ("chat_id", "talk_id", "conversation_id"):
+            value = payload.get(key)
+            if value is not None:
+                return str(value)
+        message = payload.get("message")
+        if isinstance(message, dict):
+            for key in ("chat_id", "conversation_id"):
+                value = message.get(key)
+                if value is not None:
+                    return str(value)
+        return f"deal:{deal_id}"
+
+    @staticmethod
+    def _timeline_author_kind(payload: dict[str, Any]) -> str:
+        direction = str(payload.get("direction") or payload.get("message_type") or "").lower()
+        if any(part in direction for part in ("out", "manager", "user")):
+            return "user"
+        if any(part in direction for part in ("in", "client", "customer")):
+            return "client"
+        sender = payload.get("sender")
+        if isinstance(sender, dict) and sender.get("ref_id"):
+            return "user"
+        if payload.get("created_by") or payload.get("author_user_id"):
+            return "user"
+        return "client"
+
+    @staticmethod
+    def _timeline_author_user_id(payload: dict[str, Any]) -> str | None:
+        for key in ("created_by", "author_user_id", "user_id", "responsible_user_id"):
+            value = payload.get(key)
+            if value is not None:
+                return str(value)
+        sender = payload.get("sender")
+        if isinstance(sender, dict) and sender.get("ref_id") is not None:
+            return str(sender.get("ref_id"))
+        return None
+
+    @staticmethod
+    def _timeline_channel(payload: dict[str, Any]) -> str | None:
+        for key in ("channel", "origin", "source_name", "message_type"):
+            value = payload.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        source = payload.get("source")
+        if isinstance(source, dict):
+            for key in ("name", "type", "external_id"):
+                value = source.get(key)
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+        return "amocrm"
+
+    @staticmethod
+    def _inbox_chat_items(body: Any) -> list[dict[str, Any]]:
+        if isinstance(body, list):
+            return [item for item in body if isinstance(item, dict)]
+        if not isinstance(body, dict):
+            return []
+        response = body.get("response")
+        if isinstance(response, dict):
+            nested = AmoCrmConnector._inbox_chat_items(response)
+            if nested:
+                return nested
+        embedded = body.get("_embedded")
+        candidates: list[Any] = []
+        for key in ("items", "chats", "talks", "conversations"):
+            candidates.append(body.get(key))
+            if isinstance(embedded, dict):
+                candidates.append(embedded.get(key))
+        for candidate in candidates:
+            if isinstance(candidate, list):
+                return [item for item in candidate if isinstance(item, dict)]
+        return []
+
+    @staticmethod
+    def _chat_last_message_at(payload: dict[str, Any]) -> Optional[datetime]:
+        for key in ("last_message_at", "updated_at", "created_at"):
+            parsed = AmoCrmConnector._from_epoch(payload.get(key))
+            if parsed is not None:
+                return parsed
+        message = payload.get("last_message")
+        if isinstance(message, dict):
+            for key in ("created_at", "timestamp", "date"):
+                parsed = AmoCrmConnector._from_epoch(message.get(key))
+                if parsed is not None:
+                    return parsed
+        return None
+
+    @staticmethod
+    def _nested_id(payload: dict[str, Any], *paths: str) -> str | None:
+        for path in paths:
+            current: Any = payload
+            for part in path.split("."):
+                if not isinstance(current, dict):
+                    current = None
+                    break
+                current = current.get(part)
+            if current is not None and current != "":
+                return str(current)
+        return None
+
     # ----- OAuth --------------------------------------------------------------
 
     def oauth_authorize_url(self, state: str, redirect_uri: str) -> str:
@@ -637,8 +885,10 @@ class AmoCrmConnector(CRMConnector):
         """
         Выгружает сделки (``/api/v4/leads``).
 
-        * ``with=contacts,companies`` → amoCRM вложит в ``_embedded``
-          первичные связи; из них берём ``contact_id`` / ``company_id``.
+        * ``with=contacts,companies,catalog_elements,source`` → amoCRM вложит
+          в ``_embedded`` первичные связи, привязанные товары/элементы списков
+          и источник; из contacts/companies берём ``contact_id`` /
+          ``company_id``, остальное сохраняется в raw payload.
         * ``since`` → ``filter[updated_at][from]=<unix>``, инкрементальная
           выборка. Без since — полный дамп.
         * ``created_from``/``created_to`` → пользовательский аналитический
@@ -654,9 +904,10 @@ class AmoCrmConnector(CRMConnector):
             иначе          → 'open'
 
         amoCRM не кладёт валюту в лид (она на уровне аккаунта) → ``currency=None``.
-        Источник лида (``source``) — Phase 2B (``/leads/sources``).
+        Источник лида (``source``) сохраняется в raw payload как
+        ``_embedded.source``; нормализованный source mapping — отдельный слой.
         """
-        params: dict[str, Any] = {"with": "contacts,companies"}
+        params: dict[str, Any] = {"with": "contacts,companies,catalog_elements,source"}
         if since is not None:
             params["filter[updated_at][from]"] = self._to_epoch(since)
         if created_from is not None:
@@ -933,13 +1184,208 @@ class AmoCrmConnector(CRMConnector):
     ) -> Iterable[RawMessage]:
         raise NotImplementedError(_V1_NOT_IMPLEMENTED_MSG.format(method="fetch_messages"))
 
+    def fetch_lead_timeline_messages(
+        self,
+        access_token: str,
+        deal_ids: Iterable[str],
+        *,
+        created_from: Optional[datetime] = None,
+        created_to: Optional[datetime] = None,
+        limit: Optional[int] = None,
+    ) -> Iterable[RawMessage]:
+        """Experimental import of client messages from lead events_timeline AJAX."""
+        yielded = 0
+        for deal_id in deal_ids:
+            if limit is not None and yielded >= limit:
+                return
+            params: dict[str, Any] = {}
+            if created_from is not None or created_to is not None:
+                from_ts = self._to_epoch(created_from) if created_from is not None else 0
+                to_ts = (
+                    self._to_epoch(created_to)
+                    if created_to is not None
+                    else self._to_epoch(datetime.now(tz=timezone.utc))
+                )
+                params["filter[created_at][gte_lte]"] = f"{from_ts}.{to_ts}"
+            body = self._ajax_get(
+                f"ajax/v3/leads/{deal_id}/events_timeline",
+                access_token,
+                params=params,
+            )
+            for items in self._timeline_lists(body):
+                for item in items:
+                    if limit is not None and yielded >= limit:
+                        return
+                    if not isinstance(item, dict):
+                        continue
+                    if not self._is_message_timeline_item(item):
+                        continue
+                    sent_at = (
+                        self._from_epoch(item.get("created_at"))
+                        or self._from_epoch(item.get("timestamp"))
+                        or self._from_epoch(item.get("msec_timestamp"))
+                    )
+                    if created_from is not None and sent_at is not None and sent_at < created_from:
+                        continue
+                    if created_to is not None and sent_at is not None and sent_at > created_to:
+                        continue
+                    yielded += 1
+                    yield RawMessage(
+                        crm_id=self._timeline_item_id(str(deal_id), item),
+                        chat_id=self._timeline_chat_id(str(deal_id), item),
+                        deal_id=str(deal_id),
+                        contact_id=None,
+                        author_kind=self._timeline_author_kind(item),  # type: ignore[arg-type]
+                        author_user_id=self._timeline_author_user_id(item),
+                        channel=self._timeline_channel(item),
+                        text=self._message_text(item),
+                        sent_at=sent_at,
+                        raw_payload=item,
+                    )
+
+    def fetch_contact_timeline_messages(
+        self,
+        access_token: str,
+        contact_ids: Iterable[str],
+        *,
+        created_from: Optional[datetime] = None,
+        created_to: Optional[datetime] = None,
+        limit: Optional[int] = None,
+    ) -> Iterable[RawMessage]:
+        """Experimental import of client messages from contact events_timeline AJAX."""
+        yielded = 0
+        for contact_id in contact_ids:
+            if limit is not None and yielded >= limit:
+                return
+            params: dict[str, Any] = {}
+            if created_from is not None or created_to is not None:
+                from_ts = self._to_epoch(created_from) if created_from is not None else 0
+                to_ts = (
+                    self._to_epoch(created_to)
+                    if created_to is not None
+                    else self._to_epoch(datetime.now(tz=timezone.utc))
+                )
+                params["filter[created_at][gte_lte]"] = f"{from_ts}.{to_ts}"
+            body = self._ajax_get(
+                f"ajax/v3/contacts/{contact_id}/events_timeline",
+                access_token,
+                params=params,
+            )
+            for items in self._timeline_lists(body):
+                for item in items:
+                    if limit is not None and yielded >= limit:
+                        return
+                    if not isinstance(item, dict) or not self._is_message_timeline_item(item):
+                        continue
+                    sent_at = (
+                        self._from_epoch(item.get("created_at"))
+                        or self._from_epoch(item.get("timestamp"))
+                        or self._from_epoch(item.get("msec_timestamp"))
+                    )
+                    if created_from is not None and sent_at is not None and sent_at < created_from:
+                        continue
+                    if created_to is not None and sent_at is not None and sent_at > created_to:
+                        continue
+                    yielded += 1
+                    owner = f"contact:{contact_id}"
+                    yield RawMessage(
+                        crm_id=self._timeline_item_id(owner, item),
+                        chat_id=self._timeline_chat_id(owner, item),
+                        deal_id=self._nested_id(item, "lead_id", "entity.lead_id", "message.lead_id"),
+                        contact_id=str(contact_id),
+                        author_kind=self._timeline_author_kind(item),  # type: ignore[arg-type]
+                        author_user_id=self._timeline_author_user_id(item),
+                        channel=self._timeline_channel(item),
+                        text=self._message_text(item),
+                        sent_at=sent_at,
+                        raw_payload=item,
+                    )
+
+    def fetch_inbox_chats(
+        self,
+        access_token: str,
+        *,
+        created_from: Optional[datetime] = None,
+        created_to: Optional[datetime] = None,
+        limit: Optional[int] = None,
+    ) -> Iterable[dict[str, Any]]:
+        """Experimental global inbox chat scan; caller must match chats to scope."""
+        yielded = 0
+        page = 1
+        while True:
+            if limit is not None and yielded >= limit:
+                return
+            body = self._ajax_get(
+                "ajax/v4/inbox/list",
+                access_token,
+                params={
+                    "limit": 50,
+                    "page": page,
+                    "order[sort_by]": "last_message_at",
+                    "order[sort_type]": "desc",
+                },
+            )
+            chats = self._inbox_chat_items(body)
+            if not chats:
+                return
+            stop_by_period = False
+            for chat in chats:
+                last_at = self._chat_last_message_at(chat)
+                if created_to is not None and last_at is not None and last_at > created_to:
+                    continue
+                if created_from is not None and last_at is not None and last_at < created_from:
+                    stop_by_period = True
+                    continue
+                yielded += 1
+                yield chat
+                if limit is not None and yielded >= limit:
+                    return
+            if stop_by_period:
+                return
+            page += 1
+
     def fetch_tasks(
         self,
         access_token: str,
         since: Optional[datetime] = None,
         limit: Optional[int] = None,
     ) -> Iterable[RawTask]:
-        raise NotImplementedError(_V1_NOT_IMPLEMENTED_MSG.format(method="fetch_tasks"))
+        """Выгружает задачи (``/api/v4/tasks``)."""
+        params: dict[str, Any] = {}
+        if since is not None:
+            params["filter[updated_at][from]"] = self._to_epoch(since)
+
+        yielded = 0
+        for item in self._paginated_get("tasks", access_token, items_key="tasks", params=params):
+            if limit is not None and yielded >= limit:
+                return
+            yielded += 1
+            entity_type = str(item.get("entity_type") or "")
+            entity_id = item.get("entity_id")
+            deal_id = str(entity_id) if entity_type in {"leads", "lead"} and entity_id else None
+            contact_id = (
+                str(entity_id) if entity_type in {"contacts", "contact"} and entity_id else None
+            )
+            task_type = item.get("task_type_id")
+            yield RawTask(
+                crm_id=str(item.get("id", "")),
+                deal_id=deal_id,
+                contact_id=contact_id,
+                responsible_user_id=(
+                    str(item.get("responsible_user_id"))
+                    if item.get("responsible_user_id") is not None
+                    else None
+                ),
+                kind=str(task_type) if task_type is not None else None,
+                text=item.get("text"),
+                is_completed=bool(item.get("is_completed")),
+                due_at=self._from_epoch(item.get("complete_till")),
+                completed_at=(
+                    self._from_epoch(item.get("updated_at")) if item.get("is_completed") else None
+                ),
+                created_at=self._from_epoch(item.get("created_at")),
+                raw_payload=item,
+            )
 
     def fetch_notes(
         self,
@@ -947,7 +1393,189 @@ class AmoCrmConnector(CRMConnector):
         since: Optional[datetime] = None,
         limit: Optional[int] = None,
     ) -> Iterable[RawNote]:
-        raise NotImplementedError(_V1_NOT_IMPLEMENTED_MSG.format(method="fetch_notes"))
+        """Выгружает notes/timeline по сделкам (``/api/v4/leads/notes``)."""
+        params: dict[str, Any] = {}
+        if since is not None:
+            params["filter[updated_at][from]"] = self._to_epoch(since)
+
+        yielded = 0
+        for item in self._paginated_get(
+            "leads/notes", access_token, items_key="notes", params=params
+        ):
+            if limit is not None and yielded >= limit:
+                return
+            yielded += 1
+            note_params = item.get("params") if isinstance(item.get("params"), dict) else {}
+            body = (
+                note_params.get("text")
+                or note_params.get("comment")
+                or note_params.get("message")
+                or note_params.get("content")
+                or item.get("text")
+            )
+            entity_id = item.get("entity_id")
+            yield RawNote(
+                crm_id=str(item.get("id", "")),
+                deal_id=str(entity_id) if entity_id is not None else None,
+                contact_id=None,
+                author_user_id=(
+                    str(item.get("created_by")) if item.get("created_by") is not None else None
+                ),
+                body=str(body) if body is not None else None,
+                created_at=self._from_epoch(item.get("created_at")),
+                raw_payload=item,
+            )
+
+    def fetch_events(
+        self,
+        access_token: str,
+        since: Optional[datetime] = None,
+        limit: Optional[int] = None,
+    ) -> Iterable[RawEvent]:
+        """Выгружает события amoCRM history (``/api/v4/events``)."""
+        params: dict[str, Any] = {}
+        if since is not None:
+            params["filter[created_at][from]"] = self._to_epoch(since)
+
+        yielded = 0
+        for item in self._paginated_get(
+            "events", access_token, items_key="events", params=params
+        ):
+            if limit is not None and yielded >= limit:
+                return
+            yielded += 1
+            entity_id = item.get("entity_id")
+            created_by = item.get("created_by")
+            yield RawEvent(
+                crm_id=str(item.get("id", "")),
+                entity_type=str(item.get("entity_type")) if item.get("entity_type") else None,
+                entity_id=str(entity_id) if entity_id is not None else None,
+                event_type=str(item.get("type")) if item.get("type") else None,
+                created_by=str(created_by) if created_by is not None else None,
+                created_at=self._from_epoch(item.get("created_at")),
+                raw_payload=item,
+            )
+
+    def fetch_products(
+        self,
+        access_token: str,
+        since: Optional[datetime] = None,
+        limit: Optional[int] = None,
+    ) -> Iterable[RawProduct]:
+        """Выгружает элементы catalog/list API как товары/услуги/списки."""
+        yielded = 0
+        for catalog in self._paginated_get("catalogs", access_token, items_key="catalogs"):
+            catalog_id = catalog.get("id")
+            if catalog_id is None:
+                continue
+            params: dict[str, Any] = {}
+            if since is not None:
+                params["filter[updated_at][from]"] = self._to_epoch(since)
+            for item in self._paginated_get(
+                f"catalogs/{catalog_id}/elements",
+                access_token,
+                items_key="elements",
+                params=params,
+            ):
+                if limit is not None and yielded >= limit:
+                    return
+                yielded += 1
+                item_id = item.get("id")
+                if item_id is None:
+                    continue
+                raw_payload = {**item, "_code9_catalog": catalog}
+                price = item.get("price")
+                if not isinstance(price, (int, float)):
+                    price = self._first_custom_field_value(
+                        item.get("custom_fields_values"),
+                        field_codes={"PRICE"},
+                        field_name_contains=("цена", "price", "стоимость"),
+                    )
+                try:
+                    normalized_price = float(price) if price is not None else None
+                except (TypeError, ValueError):
+                    normalized_price = None
+                yield RawProduct(
+                    crm_id=f"{catalog_id}:{item_id}",
+                    name=item.get("name"),
+                    price=normalized_price,
+                    currency=None,
+                    raw_payload=raw_payload,
+                )
+
+    def fetch_custom_fields(
+        self,
+        access_token: str,
+        entity_types: Optional[list[str]] = None,
+    ) -> Iterable[RawCustomField]:
+        """Выгружает описания custom fields для основных amoCRM сущностей."""
+        requested = entity_types or ["leads", "contacts", "companies", "catalogs"]
+        for entity_type in requested:
+            if entity_type == "catalogs":
+                try:
+                    catalogs = list(
+                        self._paginated_get("catalogs", access_token, items_key="catalogs")
+                    )
+                except ProviderError:
+                    catalogs = []
+                for catalog in catalogs:
+                    catalog_id = catalog.get("id")
+                    if catalog_id is None:
+                        continue
+                    try:
+                        fields = self._paginated_get(
+                            f"catalogs/{catalog_id}/custom_fields",
+                            access_token,
+                            items_key="custom_fields",
+                        )
+                    except ProviderError:
+                        continue
+                    for item in fields:
+                        field_id = item.get("id")
+                        if field_id is None:
+                            continue
+                        raw_payload = {**item, "_code9_catalog": catalog}
+                        yield RawCustomField(
+                            crm_id=f"{catalog_id}:{field_id}",
+                            entity_type="product",
+                            name=item.get("name"),
+                            code=item.get("code"),
+                            field_type=item.get("type"),
+                            raw_payload=raw_payload,
+                        )
+                continue
+
+            endpoint_map = {
+                "leads": ("deal", "leads/custom_fields"),
+                "deals": ("deal", "leads/custom_fields"),
+                "contacts": ("contact", "contacts/custom_fields"),
+                "companies": ("company", "companies/custom_fields"),
+                "tasks": ("task", "tasks/custom_fields"),
+            }
+            mapped = endpoint_map.get(entity_type)
+            if mapped is None:
+                continue
+            normalized_entity, endpoint = mapped
+            try:
+                items = self._paginated_get(
+                    endpoint,
+                    access_token,
+                    items_key="custom_fields",
+                )
+                for item in items:
+                    field_id = item.get("id")
+                    if field_id is None:
+                        continue
+                    yield RawCustomField(
+                        crm_id=str(field_id),
+                        entity_type=normalized_entity,
+                        name=item.get("name"),
+                        code=item.get("code"),
+                        field_type=item.get("type"),
+                        raw_payload=item,
+                    )
+            except ProviderError:
+                continue
 
     # ----- служебное ----------------------------------------------------------
 

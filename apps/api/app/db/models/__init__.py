@@ -228,6 +228,201 @@ class CrmConnection(MainBase):
     )
 
 
+# ---------- 1.6b dashboard builder ----------
+class Dashboard(MainBase):
+    __tablename__ = "dashboards"
+
+    id = uuid_pk()
+    workspace_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("workspaces.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    crm_connection_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("crm_connections.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    created_by_user_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    name = Column(Text, nullable=False, server_default="Основной дашборд")
+    status = Column(Text, nullable=False, server_default="active")
+    filters = Column(JSONB, nullable=False, server_default="{}")
+    metadata_json = Column("metadata", JSONB, nullable=False, server_default="{}")
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=now_default())
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=now_default())
+
+    __table_args__ = (
+        CheckConstraint("status IN ('active', 'archived')", name="ck_dash_status"),
+        UniqueConstraint("crm_connection_id", "name", name="uq_dash_conn_name"),
+        Index("ix_dash_ws", "workspace_id"),
+        Index("ix_dash_conn", "crm_connection_id"),
+    )
+
+
+class DashboardWidget(MainBase):
+    __tablename__ = "dashboard_widgets"
+
+    id = uuid_pk()
+    dashboard_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("dashboards.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    widget_key = Column(Text, nullable=False)
+    widget_type = Column(Text, nullable=False)
+    title = Column(Text, nullable=False)
+    x = Column(Integer, nullable=False, server_default="0")
+    y = Column(Integer, nullable=False, server_default="0")
+    w = Column(Integer, nullable=False, server_default="4")
+    h = Column(Integer, nullable=False, server_default="3")
+    config = Column(JSONB, nullable=False, server_default="{}")
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=now_default())
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=now_default())
+
+    __table_args__ = (
+        UniqueConstraint("dashboard_id", "widget_key", name="uq_dash_widget_key"),
+        CheckConstraint("w >= 2 AND w <= 12", name="ck_dash_widget_w"),
+        CheckConstraint("h >= 2 AND h <= 12", name="ck_dash_widget_h"),
+        Index("ix_dash_widget_dash", "dashboard_id"),
+    )
+
+
+class DashboardShare(MainBase):
+    __tablename__ = "dashboard_shares"
+
+    id = uuid_pk()
+    dashboard_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("dashboards.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    token_hash = Column(Text, nullable=False, unique=True)
+    status = Column(Text, nullable=False, server_default="active")
+    created_by_user_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    last_accessed_at = Column(DateTime(timezone=True), nullable=True)
+    revoked_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=now_default())
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=now_default())
+
+    __table_args__ = (
+        CheckConstraint("status IN ('active', 'revoked')", name="ck_dashshare_status"),
+        Index("ix_dashshare_dash_status", "dashboard_id", "status"),
+    )
+
+
+# ---------- 1.6c universal analytics catalog ----------
+class CrmFieldMapping(MainBase):
+    __tablename__ = "crm_field_mappings"
+
+    id = uuid_pk()
+    workspace_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("workspaces.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    crm_connection_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("crm_connections.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    provider = Column(Text, nullable=False, server_default="amocrm")
+    entity_type = Column(Text, nullable=False)
+    metric_key = Column(Text, nullable=False)
+    field_id = Column(Text, nullable=True)
+    field_name = Column(Text, nullable=True)
+    field_type = Column(Text, nullable=True)
+    value_type = Column(Text, nullable=False, server_default="string")
+    status = Column(Text, nullable=False, server_default="active")
+    metadata_json = Column("metadata", JSONB, nullable=False, server_default="{}")
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=now_default())
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=now_default())
+
+    __table_args__ = (
+        CheckConstraint(
+            "entity_type IN ('deal','contact','company','task','note','call','message')",
+            name="ck_crmfieldmap_entity",
+        ),
+        CheckConstraint(
+            "status IN ('active','disabled','missing')",
+            name="ck_crmfieldmap_status",
+        ),
+        UniqueConstraint("crm_connection_id", "metric_key", name="uq_crmfieldmap_conn_metric"),
+        Index("ix_crmfieldmap_workspace", "workspace_id"),
+        Index("ix_crmfieldmap_connection", "crm_connection_id"),
+    )
+
+
+class DashboardTemplate(MainBase):
+    __tablename__ = "dashboard_templates"
+
+    id = uuid_pk()
+    template_key = Column(Text, nullable=False, unique=True)
+    title = Column(Text, nullable=False)
+    category = Column(Text, nullable=False)
+    description = Column(Text, nullable=True)
+    pages = Column(JSONB, nullable=False, server_default="[]")
+    widgets = Column(JSONB, nullable=False, server_default="[]")
+    requirements = Column(JSONB, nullable=False, server_default="[]")
+    status = Column(Text, nullable=False, server_default="active")
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=now_default())
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=now_default())
+
+    __table_args__ = (
+        CheckConstraint("status IN ('active','archived')", name="ck_dashtpl_status"),
+        Index("ix_dashtpl_category", "category"),
+        Index("ix_dashtpl_status", "status"),
+    )
+
+
+class AiTenantInsight(MainBase):
+    __tablename__ = "ai_tenant_insights"
+
+    id = uuid_pk()
+    workspace_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("workspaces.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    crm_connection_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("crm_connections.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    analysis_job_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("ai_analysis_jobs.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    source_kind = Column(Text, nullable=False)
+    source_ref = Column(JSONB, nullable=False, server_default="{}")
+    insight_type = Column(Text, nullable=False)
+    title = Column(Text, nullable=False)
+    body = Column(Text, nullable=True)
+    score = Column(Numeric(5, 2), nullable=True)
+    payload = Column(JSONB, nullable=False, server_default="{}")
+    status = Column(Text, nullable=False, server_default="active")
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=now_default())
+
+    __table_args__ = (
+        CheckConstraint(
+            "source_kind IN ('deal','call','message','email','chat','manager','pipeline')",
+            name="ck_aitenant_source_kind",
+        ),
+        CheckConstraint("status IN ('active','archived')", name="ck_aitenant_status"),
+        Index("ix_aitenant_workspace_created", "workspace_id", "created_at"),
+        Index("ix_aitenant_conn_type", "crm_connection_id", "insight_type"),
+        Index("ix_aitenant_job", "analysis_job_id"),
+    )
+
+
 # ---------- 1.7 billing_accounts ----------
 class BillingAccount(MainBase):
     __tablename__ = "billing_accounts"
@@ -278,6 +473,59 @@ class BillingLedger(MainBase):
     )
 
 
+# ---------- 1.8a payment_orders ----------
+class PaymentOrder(MainBase):
+    __tablename__ = "payment_orders"
+
+    id = uuid_pk()
+    workspace_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("workspaces.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    created_by_user_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    provider = Column(Text, nullable=False, server_default="tbank")
+    method = Column(Text, nullable=False)
+    purpose = Column(Text, nullable=False)
+    status = Column(Text, nullable=False, server_default="pending")
+    amount_cents = Column(BigInteger, nullable=False)
+    currency = Column(Text, nullable=False, server_default="RUB")
+    token_amount_mtokens = Column(BigInteger, nullable=False, server_default="0")
+    plan_key = Column(Text, nullable=True)
+    period_months = Column(Integer, nullable=True)
+    external_order_id = Column(Text, nullable=False, unique=True)
+    external_payment_id = Column(Text, nullable=True)
+    payment_url = Column(Text, nullable=True)
+    invoice_number = Column(Text, nullable=True)
+    payer_inn = Column(Text, nullable=True)
+    payer_kpp = Column(Text, nullable=True)
+    payer_name = Column(Text, nullable=True)
+    payer_ogrn = Column(Text, nullable=True)
+    payer_address = Column(Text, nullable=True)
+    metadata_json = Column("metadata", JSONB, nullable=False, server_default="{}")
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=now_default())
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=now_default())
+    paid_at = Column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        CheckConstraint("method IN ('card','invoice')", name="ck_payorder_method"),
+        CheckConstraint("purpose IN ('token_topup','subscription')", name="ck_payorder_purpose"),
+        CheckConstraint(
+            "status IN ('pending','paid','failed','cancelled','manual_review')",
+            name="ck_payorder_status",
+        ),
+        CheckConstraint("amount_cents > 0", name="ck_payorder_amount_positive"),
+        CheckConstraint("token_amount_mtokens >= 0", name="ck_payorder_tokens_nonnegative"),
+        Index("ix_payorder_workspace_created", "workspace_id", "created_at"),
+        Index("ix_payorder_status_created", "status", "created_at"),
+        Index("ix_payorder_external_payment", "external_payment_id"),
+    )
+
+
 # ---------- 1.8b token_accounts ----------
 class TokenAccount(MainBase):
     __tablename__ = "token_accounts"
@@ -293,6 +541,7 @@ class TokenAccount(MainBase):
     included_monthly_mtokens = Column(BigInteger, nullable=False, server_default="0")
     balance_mtokens = Column(BigInteger, nullable=False, server_default="0")
     reserved_mtokens = Column(BigInteger, nullable=False, server_default="0")
+    subscription_expires_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=now_default())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=now_default())
 
@@ -785,6 +1034,7 @@ from app.db.models.tenant_schema import (  # noqa: E402, F401
     Contact,
     CrmUser,
     Deal,
+    DealProduct,
     DealTag,
     KnowledgeBaseVersion,
     Message,
@@ -821,8 +1071,12 @@ __all__ = [
     "Workspace",
     "WorkspaceMember",
     "CrmConnection",
+    "Dashboard",
+    "DashboardWidget",
+    "DashboardShare",
     "BillingAccount",
     "BillingLedger",
+    "PaymentOrder",
     "TokenAccount",
     "TokenLedger",
     "TokenReservation",
@@ -870,5 +1124,6 @@ __all__ = [
     "Product",
     "Tag",
     "DealTag",
+    "DealProduct",
     "KnowledgeBaseVersion",
 ]

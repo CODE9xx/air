@@ -1,6 +1,7 @@
 'use client';
 
 import { useLocale, useTranslations } from 'next-intl';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useState } from 'react';
 import { Button } from '@/components/ui/Button';
@@ -24,7 +25,7 @@ import { AmoCrmExternalButton } from '@/components/integrations/AmoCrmExternalBu
  *   — real OAuth (static_client): `GET /integrations/amocrm/oauth/start`
  *     возвращает `authorize_url` → редиректим юзера на amoCRM consent.
  *   — real OAuth (external_button, #44.6 v3 / #51.1):
- *     шаг 1 — клик Code9 → `GET /oauth/start` создаёт pending CrmConnection
+ *     шаг 1 — клик CODE9 → `GET /oauth/start` создаёт pending CrmConnection
  *              и state в Redis (TTL 600s), возвращает
  *              {auth_mode, connection_id, state, redirect_uri}.
  *     шаг 2 — фронт рендерит официальный amoCRM widget
@@ -62,10 +63,21 @@ export default function NewConnectionPage() {
   const [externalStart, setExternalStart] = useState<ExternalButtonStart | null>(
     null,
   );
+  const [existingConnections, setExistingConnections] = useState<CrmConnection[]>(
+    [],
+  );
+  const [checkingExisting, setCheckingExisting] = useState(false);
+
+  const existingCrmConnection =
+    existingConnections.find((connection) => connection.status !== 'deleted') ??
+    null;
+  const canRetryExistingOAuth =
+    existingCrmConnection?.provider === 'amocrm' &&
+    ['pending', 'failed'].includes(existingCrmConnection.status);
+  const blocksNewCrm = Boolean(existingCrmConnection) && !canRetryExistingOAuth;
 
   // Подгружаем конфиг кнопки один раз при mount'е, чтобы понимать,
-  // какой режим бэкенд ожидает, и показать клиенту соответствующую
-  // подсказку (особенно про webhook для external_button).
+  // какой режим бэкенд ожидает.
   useEffect(() => {
     (async () => {
       try {
@@ -80,9 +92,44 @@ export default function NewConnectionPage() {
     })();
   }, []);
 
+  useEffect(() => {
+    if (!wsId) {
+      setExistingConnections([]);
+      setCheckingExisting(false);
+      return;
+    }
+    let cancelled = false;
+    setCheckingExisting(true);
+    (async () => {
+      try {
+        const rows = await api.get<CrmConnection[]>(
+          `/workspaces/${wsId}/crm/connections`,
+        );
+        if (!cancelled) setExistingConnections(rows);
+      } catch {
+        if (!cancelled) setExistingConnections([]);
+      } finally {
+        if (!cancelled) setCheckingExisting(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [wsId]);
+
+  const openExistingConnection = useCallback(() => {
+    if (!existingCrmConnection) return;
+    router.push(`/${locale}/app/connections/${existingCrmConnection.id}`);
+  }, [existingCrmConnection, locale, router]);
+
   const connectOAuth = async () => {
     if (!wsId) {
       toast({ kind: 'error', title: tCommon('error') });
+      return;
+    }
+    if (blocksNewCrm) {
+      toast({ kind: 'info', title: t('singleCrmConflict') });
+      openExistingConnection();
       return;
     }
     setLoadingOAuth(true);
@@ -122,6 +169,11 @@ export default function NewConnectionPage() {
       toast({ kind: 'error', title: tCommon('error') });
       setLoadingOAuth(false);
     } catch (err) {
+      if (err instanceof ApiError && err.code === 'crm_connection_exists') {
+        toast({ kind: 'info', title: t('singleCrmConflict') });
+        setLoadingOAuth(false);
+        return;
+      }
       const msg =
         err instanceof ApiError && err.message
           ? err.message
@@ -136,6 +188,11 @@ export default function NewConnectionPage() {
       toast({ kind: 'error', title: tCommon('error') });
       return;
     }
+    if (blocksNewCrm) {
+      toast({ kind: 'info', title: t('singleCrmConflict') });
+      openExistingConnection();
+      return;
+    }
     setLoadingMock(true);
     try {
       const res = await api.post<CrmConnection>(
@@ -143,8 +200,18 @@ export default function NewConnectionPage() {
         { name: 'amoCRM (mock)' },
       );
       router.push(`/${locale}/app/connections/${res.id}`);
-    } catch {
-      toast({ kind: 'error', title: tCommon('error') });
+    } catch (err) {
+      const title =
+        err instanceof ApiError && err.code === 'crm_connection_exists'
+          ? t('singleCrmConflict')
+          : tCommon('error');
+      toast({
+        kind:
+          err instanceof ApiError && err.code === 'crm_connection_exists'
+            ? 'info'
+            : 'error',
+        title,
+      });
       setLoadingMock(false);
     }
   };
@@ -178,11 +245,48 @@ export default function NewConnectionPage() {
     buttonConfig?.auth_mode === 'external_button' && !buttonConfig.mock;
 
   return (
-    <div className="space-y-6 max-w-3xl">
+    <div className="space-y-6 max-w-5xl">
       <header>
         <h1 className="text-2xl font-semibold">{t('title')}</h1>
         <p className="text-sm text-muted-foreground mt-1">{t('subtitle')}</p>
       </header>
+
+      {existingCrmConnection && (
+        <section className="card border-primary/30 bg-primary/5 p-5">
+          <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+            <div>
+              <Badge tone="success">{t('singleCrmBadge')}</Badge>
+              <h2 className="mt-3 text-lg font-semibold">
+                {t('singleCrmTitle')}
+              </h2>
+              <p className="mt-1 text-sm text-muted-foreground">
+                {t('singleCrmBody')}
+              </p>
+              <div className="mt-3 flex flex-wrap gap-2 text-xs text-muted-foreground">
+                <span className="rounded-md border border-border bg-background px-2 py-1">
+                  {existingCrmConnection.provider}
+                </span>
+                <span className="rounded-md border border-border bg-background px-2 py-1">
+                  {existingCrmConnection.name ?? t('amocrm')}
+                </span>
+                <span className="rounded-md border border-border bg-background px-2 py-1">
+                  {existingCrmConnection.status}
+                </span>
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {canRetryExistingOAuth && (
+                <Button onClick={connectOAuth} loading={loadingOAuth}>
+                  {t('singleCrmContinue')}
+                </Button>
+              )}
+              <Button variant="secondary" onClick={openExistingConnection}>
+                {t('singleCrmOpen')}
+              </Button>
+            </div>
+          </div>
+        </section>
+      )}
 
       {externalStart && isExternalButtonMode && buttonConfig ? (
         <section className="card p-5 space-y-4">
@@ -207,34 +311,70 @@ export default function NewConnectionPage() {
           </div>
         </section>
       ) : (
-        <div className="grid md:grid-cols-3 gap-4">
-          <div className="card p-5 flex flex-col">
-            <div className="inline-flex h-10 w-10 items-center justify-center rounded bg-primary/10 text-primary font-semibold">
-              am
-            </div>
+        <div className="grid md:grid-cols-2 xl:grid-cols-4 gap-4">
+          <div className="card p-4 flex flex-col items-center text-center">
+            <IntegrationLogo
+              src="/amocrm-wordmark.png"
+              alt="amoCRM"
+            />
             <h3 className="mt-3 font-semibold">{t('amocrm')}</h3>
             <p className="text-xs text-muted-foreground mt-1 flex-1">
               {t('amocrmDesc')}
             </p>
-            <div className="mt-4 flex flex-col gap-2">
-              <Button onClick={connectOAuth} loading={loadingOAuth} disabled={!ready || !wsId}>
+            <div className="mt-4 flex w-full flex-col gap-2">
+              <Button
+                onClick={connectOAuth}
+                loading={loadingOAuth}
+                disabled={
+                  !ready ||
+                  !wsId ||
+                  checkingExisting ||
+                  blocksNewCrm
+                }
+              >
                 {t('connectOAuth')}
               </Button>
               <Button
                 variant="secondary"
                 onClick={connectMock}
                 loading={loadingMock}
-                disabled={!ready || !wsId}
+                disabled={
+                  !ready ||
+                  !wsId ||
+                  checkingExisting ||
+                  blocksNewCrm ||
+                  canRetryExistingOAuth
+                }
               >
                 {t('connectMock')}
               </Button>
+              {blocksNewCrm && (
+                <p className="text-xs text-muted-foreground">
+                  {t('singleCrmHint')}
+                </p>
+              )}
             </div>
           </div>
 
-          <div className="card p-5 opacity-80">
-            <div className="inline-flex h-10 w-10 items-center justify-center rounded bg-muted text-muted-foreground font-semibold">
-              ko
-            </div>
+          <div className="card p-4 flex flex-col items-center text-center border-primary/30 bg-primary/5">
+            <IntegrationLogo src="/email-wordmark.svg" alt={t('email')} />
+            <h3 className="mt-3 font-semibold">{t('email')}</h3>
+            <p className="text-xs text-muted-foreground mt-1 flex-1">
+              {t('emailDesc')}
+            </p>
+            <Link
+              href={`/${locale}/app/connections/email`}
+              className="mt-4 inline-flex w-full items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-white transition hover:bg-primary-700"
+            >
+              {t('configureEmail')}
+            </Link>
+          </div>
+
+          <div className="card p-4 flex flex-col items-center text-center opacity-80">
+            <IntegrationLogo
+              src="/kommo-wordmark.svg"
+              alt="Kommo"
+            />
             <h3 className="mt-3 font-semibold">Kommo</h3>
             <p className="text-xs text-muted-foreground mt-1">
               {t('kommoDesc')}
@@ -244,10 +384,11 @@ export default function NewConnectionPage() {
             </Badge>
           </div>
 
-          <div className="card p-5 opacity-80">
-            <div className="inline-flex h-10 w-10 items-center justify-center rounded bg-muted text-muted-foreground font-semibold">
-              bx
-            </div>
+          <div className="card p-4 flex flex-col items-center text-center opacity-80">
+            <IntegrationLogo
+              src="/bitrix24-wordmark.svg"
+              alt="Bitrix24"
+            />
             <h3 className="mt-3 font-semibold">Bitrix24</h3>
             <p className="text-xs text-muted-foreground mt-1">
               {t('bitrixDesc')}
@@ -261,20 +402,25 @@ export default function NewConnectionPage() {
 
       <p className="text-xs text-muted-foreground">{t('oauthNote')}</p>
 
-      {isExternalButtonMode && !externalStart && (
-        <div className="card p-4 text-xs text-muted-foreground border-primary/30">
-          <div className="font-semibold text-foreground mb-1">
-            {t('externalButtonModeTitle')}
-          </div>
-          <p>{t('externalButtonModeDesc')}</p>
-          {(buttonConfig?.secrets_uri ?? buttonConfig?.webhook_url) && (
-            <p className="mt-2 font-mono break-all">
-              {t('externalButtonWebhookLabel')}:{' '}
-              {buttonConfig?.secrets_uri ?? buttonConfig?.webhook_url}
-            </p>
-          )}
-        </div>
-      )}
+    </div>
+  );
+}
+
+function IntegrationLogo({
+  src,
+  alt,
+}: {
+  src: string;
+  alt: string;
+}) {
+  return (
+    <div className="flex h-36 w-full items-center justify-center rounded-lg border border-border bg-white px-4 py-4 shadow-sm md:h-40">
+      <img
+        src={src}
+        alt={alt}
+        className="max-h-28 w-full max-w-[310px] object-contain object-center md:max-h-32"
+        loading="lazy"
+      />
     </div>
   );
 }

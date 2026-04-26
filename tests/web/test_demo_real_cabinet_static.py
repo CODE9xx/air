@@ -29,6 +29,8 @@ def test_login_form_keeps_default_app_redirect_and_allows_override() -> None:
     assert "interface LoginFormProps" in source
     assert "redirectTo?: string" in source
     assert "export function LoginForm({ redirectTo }: LoginFormProps = {})" in source
+    assert "api.get<User>('/auth/me')" in source
+    assert "setUser(currentUser)" in source
     assert "router.push(redirectTo ?? `/${locale}/app`)" in source
 
 

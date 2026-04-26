@@ -47,7 +47,7 @@ const state: {
     {
       id: 'n1',
       kind: 'system',
-      title: 'Добро пожаловать в Code9 Analytics',
+      title: 'Добро пожаловать в CODE9 Analytics',
       body: 'Начните с подключения amoCRM в режиме mock, чтобы увидеть демо-аналитику.',
       read_at: null,
       created_at: new Date().toISOString(),

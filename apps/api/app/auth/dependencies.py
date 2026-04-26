@@ -4,6 +4,7 @@ FastAPI dependencies: `get_current_user`, `get_current_workspace`, `require_role
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timezone
 from typing import Iterable
 
 from fastapi import Depends, HTTPException, Request, status
@@ -12,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import get_session
 from app.core.security import decode_token
-from app.db.models import AdminUser, User, Workspace, WorkspaceMember
+from app.db.models import AdminSupportSession, AdminUser, User, Workspace, WorkspaceMember
 
 
 def _extract_bearer(request: Request) -> str | None:
@@ -56,6 +57,22 @@ async def get_current_user(
     ).scalar_one_or_none()
     if not user or user.status != "active":
         raise _unauth("User not found or inactive")
+    support_session_id = payload.get("support_session_id")
+    if support_session_id:
+        try:
+            support_uuid = uuid.UUID(str(support_session_id))
+        except Exception:
+            raise _unauth("Bad support session")
+        support_session = (
+            await session.execute(
+                select(AdminSupportSession)
+                .where(AdminSupportSession.id == support_uuid)
+                .where(AdminSupportSession.ended_at.is_(None))
+                .where(AdminSupportSession.expires_at > datetime.now(timezone.utc))
+            )
+        ).scalar_one_or_none()
+        if support_session is None:
+            raise _unauth("Support session expired")
     return user
 
 

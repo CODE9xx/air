@@ -33,8 +33,12 @@ export function VerifyEmailForm() {
   } = useForm<FormValues>({ resolver: zodResolver(schema) });
 
   const onSubmit = async (values: FormValues) => {
+    if (!email) {
+      toast({ kind: 'error', title: rootT('common.error'), description: rootT('auth.errors.generic') });
+      return;
+    }
     try {
-      await api.post('/auth/verify-email/confirm', { code: values.code });
+      await api.post('/auth/verify-email', { email, code: values.code }, { scope: 'public' });
       toast({ kind: 'success', title: rootT('common.success') });
       router.push(`/${locale}/login`);
     } catch (err) {
@@ -43,8 +47,12 @@ export function VerifyEmailForm() {
   };
 
   const resend = async () => {
+    if (!email) {
+      toast({ kind: 'error', title: rootT('common.error'), description: rootT('auth.errors.generic') });
+      return;
+    }
     try {
-      await api.post('/auth/verify-email/request');
+      await api.post('/auth/verify-email/resend', { email }, { scope: 'public' });
       toast({ kind: 'info', title: t('resent') });
     } catch (err) {
       toast({ kind: 'error', title: rootT('common.error'), description: rootT(mapAuthErrorKey(err)) });

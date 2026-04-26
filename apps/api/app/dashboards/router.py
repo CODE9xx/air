@@ -43,6 +43,8 @@ router = APIRouter(tags=["dashboards"])
 settings = get_settings()
 
 _SCHEMA_RE = re.compile(r"^crm_[a-z0-9]+_[a-z0-9]{6,16}$")
+HIDDEN_PIPELINE_NAMES = ("Корзина", "План", "Тендера", "Hunter")
+HIDDEN_PIPELINE_PATTERNS = ("корзина", "тендер", "hunter")
 
 
 async def _resolve_conn(
@@ -123,10 +125,47 @@ def _date_param(value: Any) -> date | str:
         return raw
 
 
+def _parse_date_filter(value: Any, field: str) -> date:
+    if isinstance(value, date):
+        return value
+    try:
+        return date.fromisoformat(str(value)[:10])
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"error": {"code": "validation_error", "message": f"{field} must be YYYY-MM-DD"}},
+        )
+
+
 def _where_with_extra(where_sql: str, clause: str) -> str:
     if where_sql:
         return f"{where_sql} AND {clause}"
     return f"WHERE {clause}"
+
+
+def _hidden_pipeline_clause(
+    pipeline_alias: str = "p",
+    *,
+    prefix: str = "hidden_pipeline",
+    allow_null: bool = True,
+) -> tuple[str, dict[str, Any]]:
+    name_sql = f"LOWER(BTRIM(COALESCE({pipeline_alias}.name, '')))"
+    params: dict[str, Any] = {}
+    exact_keys: list[str] = []
+    for idx, name in enumerate(HIDDEN_PIPELINE_NAMES):
+        key = f"{prefix}_{idx}"
+        params[key] = name.lower()
+        exact_keys.append(f":{key}")
+    pattern_clauses: list[str] = []
+    for idx, pattern in enumerate(HIDDEN_PIPELINE_PATTERNS):
+        key = f"{prefix}_pattern_{idx}"
+        params[key] = f"%{pattern}%"
+        pattern_clauses.append(f"{name_sql} NOT LIKE :{key}")
+    clauses = [f"{name_sql} NOT IN ({', '.join(exact_keys)})", *pattern_clauses]
+    clause = " AND ".join(clauses)
+    if allow_null:
+        clause = f"({pipeline_alias}.id IS NULL OR ({clause}))"
+    return clause, params
 
 
 def _mock_sales_dashboard(connection_id: str) -> dict[str, Any]:
@@ -186,6 +225,25 @@ def _mock_sales_dashboard(connection_id: str) -> dict[str, Any]:
             }
             for item in managers.get("managers", [])
         ],
+        "manager_metrics": [
+            {
+                "user_id": item.get("user_id"),
+                "name": item.get("full_name"),
+                "applications": int(item.get("deals_open") or 0) + int(item.get("deals_won") or 0),
+                "calls": 0,
+                "sales_count": int(item.get("deals_won") or 0),
+                "not_sales_count": 0,
+                "sales_amount": 0,
+                "conversion": 0,
+                "calls_in": 0,
+                "calls_out": 0,
+                "calls_duration_sec": 0,
+                "messages_count": 0,
+                "emails_sent": 0,
+                "currency": "RUB",
+            }
+            for item in managers.get("managers", [])
+        ],
         "top_deals": [],
         "sales_cycle": {
             "avg_won_cycle_days": 18,
@@ -228,17 +286,78 @@ def _mock_sales_dashboard(connection_id: str) -> dict[str, Any]:
     }
 
 
+def _dashboard_filter_state(
+    conn: CrmConnection,
+    *,
+    period: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    pipeline_id: str | None = None,
+) -> dict[str, Any]:
+    active = _active_export(conn)
+    normalized_period = period if period in {"active_export", "all_time", "custom"} else "active_export"
+    active_pipeline_ids = [
+        str(item)
+        for item in active.get("pipeline_ids", [])
+        if isinstance(item, (str, int)) and str(item).strip()
+    ]
+
+    selected_date_from = None if normalized_period == "all_time" else active.get("date_from")
+    selected_date_to = None if normalized_period == "all_time" else active.get("date_to")
+    if date_from:
+        selected_date_from = _parse_date_filter(date_from, "date_from").isoformat()
+        normalized_period = "custom"
+    if date_to:
+        selected_date_to = _parse_date_filter(date_to, "date_to").isoformat()
+        normalized_period = "custom"
+    if selected_date_from and selected_date_to:
+        parsed_from = _parse_date_filter(selected_date_from, "date_from")
+        parsed_to = _parse_date_filter(selected_date_to, "date_to")
+        if parsed_from > parsed_to:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={
+                    "error": {
+                        "code": "validation_error",
+                        "message": "date_from must be <= date_to",
+                    }
+                },
+            )
+
+    requested_pipeline = str(pipeline_id).strip() if pipeline_id else None
+    if requested_pipeline and active_pipeline_ids and requested_pipeline not in active_pipeline_ids:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "error": {
+                    "code": "pipeline_not_in_export",
+                    "message": "Pipeline was not selected in the active export",
+                }
+            },
+        )
+    selected_pipeline_ids = [requested_pipeline] if requested_pipeline else active_pipeline_ids
+    return {
+        "period": normalized_period,
+        "date_from": selected_date_from,
+        "date_to": selected_date_to,
+        "pipeline_id": requested_pipeline,
+        "pipeline_ids": selected_pipeline_ids,
+        "active_pipeline_ids": active_pipeline_ids,
+    }
+
+
 def _dashboard_filters(
     conn: CrmConnection,
     *,
+    filters: dict[str, Any] | None = None,
     deal_alias: str = "d",
     pipeline_alias: str = "p",
 ) -> tuple[str, dict[str, Any]]:
-    active = _active_export(conn)
+    state = filters or _dashboard_filter_state(conn)
     clauses: list[str] = []
     params: dict[str, Any] = {}
-    date_from = active.get("date_from")
-    date_to = active.get("date_to")
+    date_from = state.get("date_from")
+    date_to = state.get("date_to")
     if date_from:
         clauses.append(f"{deal_alias}.created_at_external >= CAST(:active_date_from AS date)")
         params["active_date_from"] = _date_param(date_from)
@@ -247,7 +366,7 @@ def _dashboard_filters(
             f"{deal_alias}.created_at_external < CAST(:active_date_to AS date) + INTERVAL '1 day'"
         )
         params["active_date_to"] = _date_param(date_to)
-    pipeline_ids = active.get("pipeline_ids")
+    pipeline_ids = state.get("pipeline_ids")
     if isinstance(pipeline_ids, list) and pipeline_ids:
         placeholders: list[str] = []
         for idx, pipeline_id in enumerate(pipeline_ids):
@@ -255,6 +374,9 @@ def _dashboard_filters(
             placeholders.append(f":{key}")
             params[key] = str(pipeline_id)
         clauses.append(f"{pipeline_alias}.external_id IN ({', '.join(placeholders)})")
+    hidden_clause, hidden_params = _hidden_pipeline_clause(pipeline_alias)
+    clauses.append(hidden_clause)
+    params.update(hidden_params)
     if not clauses:
         return "", params
     return "WHERE " + " AND ".join(clauses), params
@@ -263,13 +385,14 @@ def _dashboard_filters(
 def _dashboard_deal_join_filters(
     conn: CrmConnection,
     *,
+    filters: dict[str, Any] | None = None,
     deal_alias: str = "d",
 ) -> tuple[str, dict[str, Any]]:
-    active = _active_export(conn)
+    state = filters or _dashboard_filter_state(conn)
     clauses: list[str] = []
     params: dict[str, Any] = {}
-    date_from = active.get("date_from")
-    date_to = active.get("date_to")
+    date_from = state.get("date_from")
+    date_to = state.get("date_to")
     if date_from:
         clauses.append(f"{deal_alias}.created_at_external >= CAST(:active_date_from AS date)")
         params["active_date_from"] = _date_param(date_from)
@@ -336,15 +459,23 @@ async def dashboard_funnel(
         deal_join_sql, deal_params = _dashboard_deal_join_filters(conn)
         active = _active_export(conn)
         pipeline_ids = active.get("pipeline_ids")
-        stage_where = ""
+        stage_where_parts: list[str] = []
         stage_params: dict[str, Any] = {}
+        hidden_clause, hidden_params = _hidden_pipeline_clause(
+            "p",
+            prefix="stage_hidden_pipeline",
+            allow_null=False,
+        )
+        stage_where_parts.append(hidden_clause)
+        stage_params.update(hidden_params)
         if isinstance(pipeline_ids, list) and pipeline_ids:
             placeholders = []
             for idx, pipeline_id in enumerate(pipeline_ids):
                 key = f"stage_pipeline_{idx}"
                 placeholders.append(f":{key}")
                 stage_params[key] = str(pipeline_id)
-            stage_where = f"WHERE p.external_id IN ({', '.join(placeholders)})"
+            stage_where_parts.append(f"p.external_id IN ({', '.join(placeholders)})")
+        stage_where = "WHERE " + " AND ".join(stage_where_parts)
         rows = (
             await session.execute(
                 text(
@@ -377,8 +508,48 @@ async def dashboard_sources(
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     conn = await _resolve_conn(session, user, connection_id)
-    # В tenant-схеме нет отдельного поля source — возвращаем mock всегда.
-    return mock_dashboard_sources(str(conn.id))
+    if _use_mock(conn):
+        return mock_dashboard_sources(str(conn.id))
+    try:
+        await _set_search_path(session, conn.tenant_schema)
+        where_sql, params = _dashboard_filters(conn)
+        raw_dashboard_sources = (
+            await session.execute(
+                text(
+                    "SELECT COALESCE(NULLIF(ds.source_name, ''), NULLIF(ds.utm_source, ''), 'Без источника') AS source, "
+                    "       COUNT(DISTINCT d.id), "
+                    "       COUNT(DISTINCT d.id) FILTER (WHERE d.status='won'), "
+                    "       COALESCE(SUM(d.price_cents) FILTER (WHERE d.status='won'), 0), "
+                    "       COALESCE(MAX(ds.utm_medium), ''), "
+                    "       COALESCE(MAX(ds.utm_campaign), '') "
+                    "FROM deals d "
+                    "LEFT JOIN pipelines p ON p.id = d.pipeline_id "
+                    "LEFT JOIN deal_sources ds ON ds.deal_id = d.id "
+                    f"{where_sql} "
+                    "GROUP BY COALESCE(NULLIF(ds.source_name, ''), NULLIF(ds.utm_source, ''), 'Без источника') "
+                    "ORDER BY COUNT(DISTINCT d.id) DESC "
+                    "LIMIT 30"
+                ),
+                params,
+            )
+        ).all()
+        return {
+            "mock": False,
+            "connection_id": str(conn.id),
+            "sources": [
+                {
+                    "name": row[0],
+                    "count": int(row[1] or 0),
+                    "won": int(row[2] or 0),
+                    "revenue_cents": int(row[3] or 0),
+                    "utm_medium": row[4] or None,
+                    "utm_campaign": row[5] or None,
+                }
+                for row in raw_dashboard_sources
+            ],
+        }
+    except Exception:
+        return mock_dashboard_sources(str(conn.id))
 
 
 @router.get("/crm/connections/{connection_id}/dashboard/managers")
@@ -393,6 +564,7 @@ async def dashboard_managers(
     try:
         await _set_search_path(session, conn.tenant_schema)
         where_sql, params = _dashboard_filters(conn)
+        where_sql = _where_with_extra(where_sql, "COALESCE(u.is_active, TRUE) IS TRUE")
         rows = (
             await session.execute(
                 text(
@@ -470,30 +642,113 @@ async def dashboard_messages(
         return mock_dashboard_messages(str(conn.id))
     try:
         await _set_search_path(session, conn.tenant_schema)
+        where_sql, params = _dashboard_filters(conn)
         rows = (
             await session.execute(
                 text(
-                    "SELECT c.channel, COUNT(m.id) "
-                    "FROM chats c LEFT JOIN messages m ON m.chat_id = c.id "
+                    "SELECT c.channel, COUNT(DISTINCT m.id), "
+                    "       COUNT(DISTINCT m.id) FILTER (WHERE m.author_kind='client'), "
+                    "       COUNT(DISTINCT m.id) FILTER (WHERE m.author_kind='user') "
+                    "FROM chats c "
+                    "LEFT JOIN messages m ON m.chat_id = c.id "
+                    "LEFT JOIN deal_contacts dc ON dc.contact_id = c.contact_id "
+                    "LEFT JOIN deals d ON d.id = COALESCE(c.deal_id, dc.deal_id) "
+                    "LEFT JOIN pipelines p ON p.id = d.pipeline_id "
+                    f"{where_sql} "
                     "GROUP BY c.channel"
-                )
+                ),
+                params,
             )
         ).all()
-        by_channel = [{"channel": r[0] or "unknown", "count": r[1], "avg_response_min": 0} for r in rows]
+        by_channel = [
+            {
+                "channel": r[0] or "unknown",
+                "count": int(r[1] or 0),
+                "client_messages": int(r[2] or 0),
+                "manager_messages": int(r[3] or 0),
+                "avg_response_min": 0,
+            }
+            for r in rows
+        ]
         total = sum(b["count"] for b in by_channel)
         return {
             "mock": False,
             "connection_id": str(conn.id),
             "total": total,
             "by_channel": by_channel,
+            "messages_response_sla": {"avg_response_min": 0, "unanswered": 0},
         }
     except Exception:
         return mock_dashboard_messages(str(conn.id))
 
 
+@router.get("/crm/connections/{connection_id}/dashboard/options")
+async def dashboard_options(
+    connection_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    conn = await _resolve_conn(session, user, connection_id)
+    filters = _dashboard_filter_state(conn)
+    if _use_mock(conn):
+        return {
+            "mock": True,
+            "connection_id": str(conn.id),
+            "default_filters": filters,
+            "pipelines": [
+                {"id": "mock-sales", "name": "Продажи"},
+                {"id": "mock-repeat", "name": "Повторные"},
+            ],
+        }
+
+    await _set_search_path(session, conn.tenant_schema)
+    active_pipeline_ids = filters.get("active_pipeline_ids") or []
+    hidden_clause, hidden_params = _hidden_pipeline_clause(
+        "p",
+        prefix="options_hidden_pipeline",
+        allow_null=False,
+    )
+    where_sql = f"WHERE p.external_id NOT LIKE 'ext-pipe-%' AND {hidden_clause}"
+    params: dict[str, Any] = dict(hidden_params)
+    if active_pipeline_ids:
+        placeholders: list[str] = []
+        for idx, pipeline_id in enumerate(active_pipeline_ids):
+            key = f"pipeline_{idx}"
+            placeholders.append(f":{key}")
+            params[key] = str(pipeline_id)
+        where_sql += f" AND p.external_id IN ({', '.join(placeholders)})"
+
+    rows = (
+        await session.execute(
+            text(
+                "SELECT p.external_id, COALESCE(p.name, p.external_id), COUNT(d.id) "
+                "FROM pipelines p "
+                "LEFT JOIN deals d ON d.pipeline_id = p.id "
+                f"{where_sql} "
+                "GROUP BY p.id, p.external_id, p.name "
+                "ORDER BY COUNT(d.id) DESC, p.name"
+            ),
+            params,
+        )
+    ).all()
+    return {
+        "mock": False,
+        "connection_id": str(conn.id),
+        "default_filters": filters,
+        "pipelines": [
+            {"id": str(row[0]), "name": row[1], "deals": int(row[2] or 0)}
+            for row in rows
+        ],
+    }
+
+
 @router.get("/crm/connections/{connection_id}/dashboard/sales")
 async def dashboard_sales(
     connection_id: uuid.UUID,
+    period: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    pipeline_id: str | None = None,
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
@@ -503,24 +758,38 @@ async def dashboard_sales(
 
     try:
         await _set_search_path(session, conn.tenant_schema)
-        active = _active_export(conn)
-        where_sql, params = _dashboard_filters(conn)
-        deal_join_sql, deal_params = _dashboard_deal_join_filters(conn)
+        filters = _dashboard_filter_state(
+            conn,
+            period=period,
+            date_from=date_from,
+            date_to=date_to,
+            pipeline_id=pipeline_id,
+        )
+        where_sql, params = _dashboard_filters(conn, filters=filters)
+        deal_join_sql, deal_params = _dashboard_deal_join_filters(conn, filters=filters)
         monthly_where_sql = (
             f"{where_sql} AND d.created_at_external IS NOT NULL"
             if where_sql
             else "WHERE d.created_at_external IS NOT NULL"
         )
-        pipeline_ids = active.get("pipeline_ids")
-        stage_where = ""
+        pipeline_ids = filters.get("pipeline_ids")
+        stage_where_parts: list[str] = []
         stage_params: dict[str, Any] = {}
+        hidden_clause, hidden_params = _hidden_pipeline_clause(
+            "p",
+            prefix="sales_stage_hidden_pipeline",
+            allow_null=False,
+        )
+        stage_where_parts.append(hidden_clause)
+        stage_params.update(hidden_params)
         if isinstance(pipeline_ids, list) and pipeline_ids:
             placeholders: list[str] = []
             for idx, pipeline_id in enumerate(pipeline_ids):
                 key = f"stage_pipeline_{idx}"
                 placeholders.append(f":{key}")
                 stage_params[key] = str(pipeline_id)
-            stage_where = f"WHERE p.external_id IN ({', '.join(placeholders)})"
+            stage_where_parts.append(f"p.external_id IN ({', '.join(placeholders)})")
+        stage_where = "WHERE " + " AND ".join(stage_where_parts)
 
         stats = (
             await session.execute(
@@ -609,6 +878,10 @@ async def dashboard_sales(
             )
         ).all()
 
+        manager_where_sql = _where_with_extra(
+            where_sql,
+            "COALESCE(u.is_active, TRUE) IS TRUE",
+        )
         manager_rows = (
             await session.execute(
                 text(
@@ -622,7 +895,7 @@ async def dashboard_sales(
                     "FROM crm_users u "
                     "LEFT JOIN deals d ON d.responsible_user_id = u.id "
                     "LEFT JOIN pipelines p ON p.id = d.pipeline_id "
-                    f"{where_sql} "
+                    f"{manager_where_sql} "
                     "GROUP BY u.id, u.full_name "
                     "ORDER BY COALESCE(SUM(d.price_cents) FILTER (WHERE d.status='won'), 0) DESC, "
                     "         COUNT(d.id) DESC "
@@ -760,7 +1033,7 @@ async def dashboard_sales(
                     "FROM crm_users u "
                     "LEFT JOIN deals d ON d.responsible_user_id = u.id "
                     "LEFT JOIN pipelines p ON p.id = d.pipeline_id "
-                    f"{where_sql} "
+                    f"{manager_where_sql} "
                     "GROUP BY u.id, u.full_name "
                     "HAVING COUNT(d.id) FILTER (WHERE d.status='open') > 0 "
                     "ORDER BY COUNT(d.id) FILTER (WHERE d.status='open' "
@@ -773,13 +1046,90 @@ async def dashboard_sales(
             )
         ).all()
 
+        task_rows = (
+            await session.execute(
+                text(
+                    "SELECT "
+                    "  COUNT(DISTINCT t.id), "
+                    "  COUNT(DISTINCT t.id) FILTER (WHERE t.is_completed IS TRUE), "
+                    "  COUNT(DISTINCT t.id) FILTER (WHERE t.is_completed IS FALSE "
+                    "    AND t.due_at_external IS NOT NULL AND t.due_at_external < NOW()), "
+                    "  COUNT(DISTINCT d.id) FILTER (WHERE d.status='open' AND t.id IS NULL) "
+                    "FROM deals d "
+                    "LEFT JOIN pipelines p ON p.id = d.pipeline_id "
+                    "LEFT JOIN tasks t ON t.deal_id = d.id "
+                    f"{where_sql}"
+                ),
+                params,
+            )
+        ).first()
+
+        activity_rows = (
+            await session.execute(
+                text(
+                    "SELECT u.id, "
+                    "       COUNT(DISTINCT ca.id), "
+                    "       COUNT(DISTINCT ca.id) FILTER (WHERE ca.direction='in'), "
+                    "       COUNT(DISTINCT ca.id) FILTER (WHERE ca.direction='out'), "
+                    "       COALESCE(SUM(ca.duration_sec), 0), "
+                    "       COUNT(DISTINCT m.id), "
+                    "       COUNT(DISTINCT t.id) FILTER (WHERE t.is_completed IS FALSE "
+                    "         AND t.due_at_external IS NOT NULL AND t.due_at_external < NOW()) "
+                    "FROM crm_users u "
+                    "LEFT JOIN deals d ON d.responsible_user_id = u.id "
+                    "LEFT JOIN pipelines p ON p.id = d.pipeline_id "
+                    "LEFT JOIN calls ca ON ca.deal_id = d.id "
+                    "LEFT JOIN chats ch ON ch.deal_id = d.id "
+                    "LEFT JOIN messages m ON m.chat_id = ch.id "
+                    "LEFT JOIN tasks t ON t.deal_id = d.id "
+                    f"{manager_where_sql} "
+                    "GROUP BY u.id"
+                ),
+                params,
+            )
+        ).all()
+        activity_by_user = {
+            str(row[0]): {
+                "calls": int(row[1] or 0),
+                "calls_in": int(row[2] or 0),
+                "calls_out": int(row[3] or 0),
+                "calls_duration_sec": int(row[4] or 0),
+                "messages_count": int(row[5] or 0),
+                "tasks_overdue": int(row[6] or 0),
+            }
+            for row in activity_rows
+        }
+
+        stage_transition_rows = (
+            await session.execute(
+                text(
+                    "SELECT COALESCE(s_to.name, 'Неизвестный этап'), "
+                    "       COUNT(DISTINCT dst.id), "
+                    "       COALESCE(AVG(EXTRACT(EPOCH FROM (dst.changed_at_external - d.created_at_external)) / 86400.0) "
+                    "         FILTER (WHERE dst.changed_at_external IS NOT NULL AND d.created_at_external IS NOT NULL), 0) "
+                    "FROM deal_stage_transitions dst "
+                    "JOIN deals d ON d.id = dst.deal_id "
+                    "LEFT JOIN pipelines p ON p.id = d.pipeline_id "
+                    "LEFT JOIN stages s_to ON s_to.id = dst.to_stage_id "
+                    f"{where_sql} "
+                    "GROUP BY s_to.id, s_to.name "
+                    "ORDER BY COUNT(DISTINCT dst.id) DESC "
+                    "LIMIT 30"
+                ),
+                params,
+            )
+        ).all()
+
         return {
             "mock": False,
             "connection_id": str(conn.id),
             "filters": {
-                "date_from": active.get("date_from"),
-                "date_to": active.get("date_to"),
-                "pipeline_ids": active.get("pipeline_ids") or [],
+                "period": filters.get("period"),
+                "date_from": filters.get("date_from"),
+                "date_to": filters.get("date_to"),
+                "pipeline_id": filters.get("pipeline_id"),
+                "pipeline_ids": filters.get("pipeline_ids") or [],
+                "active_pipeline_ids": filters.get("active_pipeline_ids") or [],
             },
             "kpis": {
                 "total_deals": total_deals,
@@ -842,6 +1192,25 @@ async def dashboard_sales(
                 }
                 for row in manager_rows
             ],
+            "manager_metrics": [
+                {
+                    "user_id": str(row[0]),
+                    "name": row[1],
+                    "applications": int(row[2] or 0),
+                    "calls": activity_by_user.get(str(row[0]), {}).get("calls", 0),
+                    "sales_count": int(row[4] or 0),
+                    "not_sales_count": int(row[5] or 0),
+                    "sales_amount": _rub(row[6]),
+                    "conversion": round(float(row[4] or 0) / float(row[2] or 1), 4),
+                    "calls_in": activity_by_user.get(str(row[0]), {}).get("calls_in", 0),
+                    "calls_out": activity_by_user.get(str(row[0]), {}).get("calls_out", 0),
+                    "calls_duration_sec": activity_by_user.get(str(row[0]), {}).get("calls_duration_sec", 0),
+                    "messages_count": activity_by_user.get(str(row[0]), {}).get("messages_count", 0),
+                    "emails_sent": 0,
+                    "currency": "RUB",
+                }
+                for row in manager_rows
+            ],
             "top_deals": [
                 {
                     "id": str(row[0]),
@@ -898,6 +1267,20 @@ async def dashboard_sales(
                     "oldest_open_age_days": round(float(row[6] or 0), 1),
                 }
                 for row in manager_risk_rows
+            ],
+            "tasks_summary": {
+                "tasks_total": int(task_rows[0] or 0) if task_rows else 0,
+                "tasks_completed": int(task_rows[1] or 0) if task_rows else 0,
+                "tasks_overdue": int(task_rows[2] or 0) if task_rows else 0,
+                "tasks_no_next_step": int(task_rows[3] or 0) if task_rows else 0,
+            },
+            "stage_transition_metrics": [
+                {
+                    "stage": row[0],
+                    "transitions": int(row[1] or 0),
+                    "avg_days_from_creation": round(float(row[2] or 0), 1),
+                }
+                for row in stage_transition_rows
             ],
         }
     except Exception:

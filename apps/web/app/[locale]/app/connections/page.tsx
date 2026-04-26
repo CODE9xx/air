@@ -46,6 +46,8 @@ export default function ConnectionsPage() {
 
   const [conns, setConns] = useState<CrmConnection[] | null>(null);
   const flashShown = useRef(false);
+  const existingCrmConnection =
+    conns?.find((connection) => connection.status !== 'deleted') ?? null;
 
   useEffect(() => {
     if (!wsId) {
@@ -90,17 +92,34 @@ export default function ConnectionsPage() {
 
   return (
     <div className="space-y-6">
-      <header className="flex items-center justify-between">
+      <header className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold">{t('title')}</h1>
           <p className="text-sm text-muted-foreground mt-1">{t('subtitle')}</p>
         </div>
-        <Link
-          href={`/${locale}/app/connections/new`}
-          className="inline-flex items-center px-4 py-2 rounded-md bg-primary text-white text-sm font-medium hover:bg-primary-700"
-        >
-          {t('addNew')}
-        </Link>
+        <div className="flex flex-wrap gap-2">
+          <Link
+            href={`/${locale}/app/connections/email`}
+            className="inline-flex items-center px-4 py-2 rounded-md border border-border bg-white text-sm font-medium text-foreground hover:bg-muted"
+          >
+            {t('addEmail')}
+          </Link>
+          {existingCrmConnection ? (
+            <Link
+              href={`/${locale}/app/connections/${existingCrmConnection.id}`}
+              className="inline-flex items-center px-4 py-2 rounded-md bg-primary text-white text-sm font-medium hover:bg-primary-700"
+            >
+              {t('openExisting')}
+            </Link>
+          ) : (
+            <Link
+              href={`/${locale}/app/connections/new`}
+              className="inline-flex items-center px-4 py-2 rounded-md bg-primary text-white text-sm font-medium hover:bg-primary-700"
+            >
+              {t('addNew')}
+            </Link>
+          )}
+        </div>
       </header>
 
       {/* 1) /auth/me ещё не завершился — skeleton */}
@@ -136,12 +155,20 @@ export default function ConnectionsPage() {
           title={t('emptyTitle')}
           description={t('emptyBody')}
           action={
-            <Link
-              href={`/${locale}/app/connections/new`}
-              className="inline-flex items-center px-4 py-2 rounded-md bg-primary text-white text-sm font-medium hover:bg-primary-700"
-            >
-              {t('addFirst')}
-            </Link>
+            <div className="flex flex-wrap justify-center gap-2">
+              <Link
+                href={`/${locale}/app/connections/email`}
+                className="inline-flex items-center px-4 py-2 rounded-md border border-border bg-white text-sm font-medium text-foreground hover:bg-muted"
+              >
+                {t('addEmail')}
+              </Link>
+              <Link
+                href={`/${locale}/app/connections/new`}
+                className="inline-flex items-center px-4 py-2 rounded-md bg-primary text-white text-sm font-medium hover:bg-primary-700"
+              >
+                {t('addFirst')}
+              </Link>
+            </div>
           }
         />
       )}

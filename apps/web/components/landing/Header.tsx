@@ -3,18 +3,18 @@
 import Link from 'next/link';
 import { useLocale, useTranslations } from 'next-intl';
 import { LanguageSwitcher } from '@/components/LanguageSwitcher';
+import { BrandLockup } from '@/components/BrandLockup';
+import { PullChainThemeToggle } from '@/components/PullChainThemeToggle';
 
 export function Header() {
   const t = useTranslations('nav');
-  const tCommon = useTranslations('common');
   const locale = useLocale();
 
   return (
     <header className="sticky top-0 z-40 bg-white/80 backdrop-blur border-b border-border">
       <div className="container mx-auto flex h-14 items-center justify-between gap-4">
-        <Link href={`/${locale}`} className="flex items-center gap-2 font-semibold text-foreground">
-          <span className="inline-block h-6 w-6 rounded bg-primary" aria-hidden />
-          <span>{tCommon('brand')}</span>
+        <Link href={`/${locale}`} className="flex items-center">
+          <BrandLockup />
         </Link>
         <nav className="hidden md:flex items-center gap-6 text-sm text-muted-foreground">
           <a href="#features" className="hover:text-foreground">{t('features')}</a>
@@ -23,6 +23,7 @@ export function Header() {
           <a href="#faq" className="hover:text-foreground">{t('faq')}</a>
         </nav>
         <div className="flex items-center gap-2">
+          <PullChainThemeToggle />
           <LanguageSwitcher />
           <Link
             href={`/${locale}/login`}

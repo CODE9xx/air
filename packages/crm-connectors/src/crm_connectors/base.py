@@ -202,6 +202,42 @@ class RawNote:
     raw_payload: dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class RawEvent:
+    """Событие CRM timeline/history."""
+
+    crm_id: str
+    entity_type: Optional[str]
+    entity_id: Optional[str]
+    event_type: Optional[str]
+    created_by: Optional[str]
+    created_at: Optional[datetime] = None
+    raw_payload: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class RawProduct:
+    """Товар/услуга/элемент списка CRM."""
+
+    crm_id: str
+    name: Optional[str]
+    price: Optional[float] = None
+    currency: Optional[str] = None
+    raw_payload: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class RawCustomField:
+    """Описание custom field в CRM."""
+
+    crm_id: str
+    entity_type: str
+    name: Optional[str]
+    code: Optional[str] = None
+    field_type: Optional[str] = None
+    raw_payload: dict[str, Any] = field(default_factory=dict)
+
+
 # ---------------------------------------------------------------------------
 # Контракт коннектора
 # ---------------------------------------------------------------------------
@@ -298,6 +334,25 @@ class CRMConnector(Protocol):
         limit: Optional[int] = None,
     ) -> Iterable[RawMessage]: ...
 
+    def fetch_contact_timeline_messages(
+        self,
+        access_token: str,
+        contact_ids: Iterable[str],
+        *,
+        created_from: Optional[datetime] = None,
+        created_to: Optional[datetime] = None,
+        limit: Optional[int] = None,
+    ) -> Iterable[RawMessage]: ...
+
+    def fetch_inbox_chats(
+        self,
+        access_token: str,
+        *,
+        created_from: Optional[datetime] = None,
+        created_to: Optional[datetime] = None,
+        limit: Optional[int] = None,
+    ) -> Iterable[dict[str, Any]]: ...
+
     def fetch_tasks(
         self,
         access_token: str,
@@ -311,6 +366,26 @@ class CRMConnector(Protocol):
         since: Optional[datetime] = None,
         limit: Optional[int] = None,
     ) -> Iterable[RawNote]: ...
+
+    def fetch_events(
+        self,
+        access_token: str,
+        since: Optional[datetime] = None,
+        limit: Optional[int] = None,
+    ) -> Iterable[RawEvent]: ...
+
+    def fetch_products(
+        self,
+        access_token: str,
+        since: Optional[datetime] = None,
+        limit: Optional[int] = None,
+    ) -> Iterable[RawProduct]: ...
+
+    def fetch_custom_fields(
+        self,
+        access_token: str,
+        entity_types: Optional[list[str]] = None,
+    ) -> Iterable[RawCustomField]: ...
 
 
 __all__ = [
@@ -326,4 +401,7 @@ __all__ = [
     "RawMessage",
     "RawTask",
     "RawNote",
+    "RawEvent",
+    "RawProduct",
+    "RawCustomField",
 ]

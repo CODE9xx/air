@@ -23,10 +23,18 @@ import { AlertTriangle, CircleDollarSign, Clock3, GitBranch, Percent, TrendingUp
 import { Skeleton } from '@/components/ui/Skeleton';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { api } from '@/lib/api';
+import { toIntlLocale } from '@/lib/utils';
 
 type SalesDashboard = {
   mock: boolean;
-  filters: { date_from: string | null; date_to: string | null; pipeline_ids: string[] };
+  filters: {
+    period?: string | null;
+    date_from: string | null;
+    date_to: string | null;
+    pipeline_id?: string | null;
+    pipeline_ids: string[];
+    active_pipeline_ids?: string[];
+  };
   kpis: {
     total_deals: number;
     open_deals: number;
@@ -119,6 +127,19 @@ type SalesDashboard = {
   }>;
 };
 
+type DashboardOptions = {
+  mock: boolean;
+  default_filters: {
+    period?: string;
+    date_from?: string | null;
+    date_to?: string | null;
+    pipeline_ids?: string[];
+  };
+  pipelines: Array<{ id: string; name: string; deals?: number }>;
+};
+
+type DashboardPeriod = 'active_export' | 'last_30' | 'last_90' | 'last_12_months' | 'all_time' | 'custom';
+
 const STATUS_COLORS: Record<string, string> = {
   open: '#2563eb',
   won: '#059669',
@@ -128,23 +149,85 @@ const STATUS_COLORS: Record<string, string> = {
 
 const PIPELINE_COLORS = ['#2563eb', '#059669', '#d97706', '#7c3aed', '#0891b2', '#be123c'];
 
+function buildDashboardQuery(
+  period: DashboardPeriod,
+  pipelineId: string | null,
+  customDateFrom: string,
+  customDateTo: string,
+): Record<string, string> {
+  const query: Record<string, string> = {};
+  if (pipelineId) query.pipeline_id = pipelineId;
+  if (period === 'all_time') {
+    query.period = 'all_time';
+    return query;
+  }
+  if (period === 'active_export') {
+    query.period = 'active_export';
+    return query;
+  }
+  query.period = 'custom';
+  if (period === 'custom') {
+    if (customDateFrom) query.date_from = customDateFrom;
+    if (customDateTo) query.date_to = customDateTo;
+    return query;
+  }
+  const days = period === 'last_30' ? 30 : period === 'last_90' ? 90 : 365;
+  query.date_from = formatDateInput(addDays(new Date(), -days));
+  query.date_to = formatDateInput(new Date());
+  return query;
+}
+
 export default function ConnectionDashboardPage() {
   const t = useTranslations('cabinet.dashboard_page');
   const params = useParams<{ id: string; locale: string }>();
   const id = params?.id;
-  const locale = params?.locale === 'en' ? 'en-US' : 'ru-RU';
+  const locale = toIntlLocale(params?.locale ?? 'ru');
   const [data, setData] = useState<SalesDashboard | null>(null);
+  const [options, setOptions] = useState<DashboardOptions | null>(null);
+  const [period, setPeriod] = useState<DashboardPeriod>('active_export');
+  const [customDateFrom, setCustomDateFrom] = useState('');
+  const [customDateTo, setCustomDateTo] = useState('');
+  const [selectedPipelineId, setSelectedPipelineId] = useState<string | null>(null);
+  const [optionsLoading, setOptionsLoading] = useState(true);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     if (!id) {
+      setOptionsLoading(false);
       setLoading(false);
       return;
     }
     let cancelled = false;
-    setLoading(true);
+    setOptionsLoading(true);
     api
-      .get<SalesDashboard>(`/crm/connections/${id}/dashboard/sales`)
+      .get<DashboardOptions>(`/crm/connections/${id}/dashboard/options`)
+      .then((response) => {
+        if (cancelled) return;
+        setOptions(response);
+        setSelectedPipelineId((current) => current ?? response.pipelines[0]?.id ?? null);
+        if (response.default_filters.date_from) setCustomDateFrom(response.default_filters.date_from.slice(0, 10));
+        if (response.default_filters.date_to) setCustomDateTo(response.default_filters.date_to.slice(0, 10));
+      })
+      .catch(() => {
+        if (!cancelled) setOptions(null);
+      })
+      .finally(() => {
+        if (!cancelled) setOptionsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [id]);
+
+  useEffect(() => {
+    if (!id || optionsLoading) {
+      return;
+    }
+    let cancelled = false;
+    setLoading(true);
+    const query = buildDashboardQuery(period, selectedPipelineId, customDateFrom, customDateTo);
+    api
+      .get<SalesDashboard>(`/crm/connections/${id}/dashboard/sales`, { query })
       .then((response) => {
         if (!cancelled) setData(response);
       })
@@ -157,7 +240,7 @@ export default function ConnectionDashboardPage() {
     return () => {
       cancelled = true;
     };
-  }, [id]);
+  }, [customDateFrom, customDateTo, id, optionsLoading, period, selectedPipelineId]);
 
   const monthlyRevenue = useMemo(
     () =>
@@ -212,7 +295,7 @@ export default function ConnectionDashboardPage() {
     [data?.manager_risk],
   );
 
-  if (loading) {
+  if (loading || optionsLoading) {
     return (
       <div className="space-y-5">
         <Skeleton className="h-28" />
@@ -242,7 +325,9 @@ export default function ConnectionDashboardPage() {
           formatDate(data.kpis.date_to, locale) ?? '-'
         }`;
   const selectedPipelines = data.filters.pipeline_ids.length
-    ? t('selectedPipelines', { count: data.filters.pipeline_ids.length })
+    ? selectedPipelineId
+      ? options?.pipelines.find((item) => item.id === selectedPipelineId)?.name ?? t('selectedPipeline')
+      : t('selectedPipelines', { count: data.filters.pipeline_ids.length })
     : t('allPipelines');
 
   return (
@@ -273,6 +358,65 @@ export default function ConnectionDashboardPage() {
             <MiniStat label={t('managersCount')} value={formatNumber(data.kpis.manager_count, locale)} />
             <MiniStat label={t('openDeals')} value={formatNumber(data.kpis.open_deals, locale)} />
             <MiniStat label={t('lostDeals')} value={formatNumber(data.kpis.lost_deals, locale)} />
+          </div>
+        </div>
+        <div className="mt-5 grid gap-3 border-t border-slate-100 pt-4 lg:grid-cols-[1.35fr_0.65fr]">
+          <div>
+            <div className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-500">
+              {t('analyticsPeriod')}
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {(['active_export', 'last_30', 'last_90', 'last_12_months', 'all_time', 'custom'] as DashboardPeriod[]).map(
+                (item) => (
+                  <button
+                    key={item}
+                    type="button"
+                    onClick={() => setPeriod(item)}
+                    className={
+                      period === item
+                        ? 'rounded-md bg-blue-600 px-3 py-2 text-sm font-medium text-white'
+                        : 'rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50'
+                    }
+                  >
+                    {t(`period.${item}`)}
+                  </button>
+                ),
+              )}
+            </div>
+            {period === 'custom' && (
+              <div className="mt-3 flex flex-wrap gap-2">
+                <input
+                  type="date"
+                  value={customDateFrom}
+                  onChange={(event) => setCustomDateFrom(event.target.value)}
+                  className="rounded-md border border-slate-200 px-3 py-2 text-sm"
+                />
+                <input
+                  type="date"
+                  value={customDateTo}
+                  onChange={(event) => setCustomDateTo(event.target.value)}
+                  className="rounded-md border border-slate-200 px-3 py-2 text-sm"
+                />
+              </div>
+            )}
+          </div>
+          <div>
+            <label className="mb-2 block text-xs font-medium uppercase tracking-wide text-slate-500">
+              {t('analyticsPipeline')}
+            </label>
+            <select
+              value={selectedPipelineId ?? ''}
+              onChange={(event) => setSelectedPipelineId(event.target.value || null)}
+              className="w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-800"
+            >
+              {(options?.pipelines ?? []).map((pipeline) => (
+                <option key={pipeline.id} value={pipeline.id}>
+                  {pipeline.name}
+                  {typeof pipeline.deals === 'number' ? ` · ${formatNumber(pipeline.deals, locale)}` : ''}
+                </option>
+              ))}
+            </select>
+            <p className="mt-2 text-xs text-slate-500">{t('analyticsPipelineHint')}</p>
           </div>
         </div>
       </section>
@@ -827,7 +971,7 @@ function formatPercent(value: number, locale: string) {
 
 function formatDays(value: number, locale: string) {
   const rounded = Math.round(value || 0);
-  const suffix = locale.startsWith('en') ? 'd' : 'дн.';
+  const suffix = locale.startsWith('ru') ? 'дн.' : 'd';
   return `${new Intl.NumberFormat(locale).format(rounded)} ${suffix}`;
 }
 
@@ -836,6 +980,19 @@ function formatDate(value: string | null, locale: string) {
   return new Intl.DateTimeFormat(locale, { day: '2-digit', month: 'short', year: 'numeric' }).format(
     new Date(value),
   );
+}
+
+function addDays(value: Date, days: number) {
+  const copy = new Date(value);
+  copy.setDate(copy.getDate() + days);
+  return copy;
+}
+
+function formatDateInput(value: Date) {
+  const year = value.getFullYear();
+  const month = String(value.getMonth() + 1).padStart(2, '0');
+  const day = String(value.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
 }
 
 function formatMonth(value: string | null, locale: string) {

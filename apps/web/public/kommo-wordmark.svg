@@ -1,0 +1,5 @@
+<svg width="360" height="120" viewBox="0 0 360 120" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Kommo">
+  <rect width="360" height="120" fill="white"/>
+  <path d="M71 78V43c0-8 6-14 14-14h19c9 0 15 10 10 18l-13 20 20 31c5 8-1 18-10 18H93L75 87c-1-2-4-1-4 1v10c0 8-6 14-14 14H43c-8 0-14-6-14-14V78c0-8 6-14 14-14h14c8 0 14 6 14 14Z" fill="#0800c9"/>
+  <text x="133" y="78" fill="#0800c9" font-family="Arial, Helvetica, sans-serif" font-size="62" font-weight="900" letter-spacing="-5">kommo</text>
+</svg>

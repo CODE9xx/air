@@ -114,6 +114,30 @@ class Settings(BaseSettings):
     smtp_mode: str = Field(default="starttls", alias="SMTP_MODE")
     smtp_timeout_seconds: int = Field(default=10, alias="SMTP_TIMEOUT_SECONDS")
 
+    # Telegram notifications (общий CODE9 bot).
+    # Token is server-side only. Frontend receives only public username/link.
+    telegram_bot_token: str = Field(default="", alias="TELEGRAM_BOT_TOKEN")
+    telegram_bot_username: str = Field(default="", alias="TELEGRAM_BOT_USERNAME")
+    telegram_api_timeout_seconds: int = Field(default=5, alias="TELEGRAM_API_TIMEOUT_SECONDS")
+
+    # Billing integrations. These are optional: if empty, payment endpoints
+    # return controlled "not configured" errors and the app continues to boot.
+    dadata_api_key: str = Field(default="", alias="DADATA_API_KEY")
+    dadata_api_url: str = Field(
+        default="https://suggestions.dadata.ru/suggestions/api/4_1/rs/suggest/party",
+        alias="DADATA_API_URL",
+    )
+    tbank_eacq_terminal_key: str = Field(default="", alias="TBANK_EACQ_TERMINAL_KEY")
+    tbank_eacq_password: str = Field(default="", alias="TBANK_EACQ_PASSWORD")
+    tbank_eacq_api_url: str = Field(
+        default="https://securepay.tinkoff.ru/v2",
+        alias="TBANK_EACQ_API_URL",
+    )
+    tbank_eacq_success_url: str = Field(default="", alias="TBANK_EACQ_SUCCESS_URL")
+    tbank_eacq_fail_url: str = Field(default="", alias="TBANK_EACQ_FAIL_URL")
+    tbank_eacq_taxation: str = Field(default="usn_income", alias="TBANK_EACQ_TAXATION")
+    tbank_eacq_vat: str = Field(default="none", alias="TBANK_EACQ_VAT")
+
     # Admin bootstrap
     admin_bootstrap_email: str = Field(
         default="admin@code9.local", alias="ADMIN_BOOTSTRAP_EMAIL"

@@ -1,4 +1,4 @@
-# apps/web — Code9 Next.js 14 frontend
+# apps/web — CODE9 Next.js 14 frontend
 
 **Owner:** Frontend Engineer.
 **Wave 1 (сейчас):** Next.js 14 App Router скелет — landing-заглушка `/` и `/health`.

@@ -44,10 +44,11 @@ logger = logging.getLogger("code9.email")
 # текст гарантированно доходит и не блокируется спам-фильтрами.
 
 _VERIFICATION_SUBJECTS: dict[str, str] = {
-    "email_verify":       "Code9: подтверждение e-mail",
-    "password_reset":     "Code9: сброс пароля",
-    "connection_delete":  "Code9: подтверждение удаления подключения",
-    "invite":             "Code9: приглашение в workspace",
+    "email_verify":       "CODE9: подтверждение e-mail",
+    "email_change":       "CODE9: подтверждение новой почты",
+    "password_reset":     "CODE9: сброс пароля",
+    "connection_delete":  "CODE9: подтверждение удаления подключения",
+    "invite":             "CODE9: приглашение в workspace",
 }
 
 _VERIFICATION_BODIES: dict[str, str] = {
@@ -55,40 +56,48 @@ _VERIFICATION_BODIES: dict[str, str] = {
         "Здравствуйте!\n\n"
         "Ваш код подтверждения e-mail: {code}\n\n"
         "Код действителен 15 минут.\n"
-        "Если вы не запрашивали регистрацию в Code9, просто проигнорируйте письмо.\n\n"
-        "— Code9 Analytics"
+        "Если вы не запрашивали регистрацию в CODE9, просто проигнорируйте письмо.\n\n"
+        "— CODE9 Analytics"
     ),
     "password_reset": (
         "Здравствуйте!\n\n"
-        "Вы запросили сброс пароля в Code9 Analytics.\n"
+        "Вы запросили сброс пароля в CODE9 Analytics.\n"
         "Ваш код: {code}\n\n"
         "Код действителен 15 минут. Если вы не запрашивали сброс — игнорируйте "
         "это письмо, ваш текущий пароль остаётся в силе.\n\n"
-        "— Code9 Analytics"
+        "— CODE9 Analytics"
+    ),
+    "email_change": (
+        "Здравствуйте!\n\n"
+        "Вы запросили смену e-mail в CODE9 Analytics.\n"
+        "Код подтверждения новой почты: {code}\n\n"
+        "Код действителен 15 минут. Если вы не запрашивали смену почты — "
+        "не сообщайте этот код и смените пароль в кабинете.\n\n"
+        "— CODE9 Analytics"
     ),
     "connection_delete": (
         "Здравствуйте!\n\n"
-        "Вы запросили удаление CRM-подключения в Code9 Analytics.\n"
+        "Вы запросили удаление CRM-подключения в CODE9 Analytics.\n"
         "Ваш код подтверждения: {code}\n\n"
         "Код действителен 15 минут. Если вы не запрашивали это действие — "
         "срочно зайдите в аккаунт и смените пароль.\n\n"
-        "— Code9 Analytics"
+        "— CODE9 Analytics"
     ),
     "invite": (
         "Здравствуйте!\n\n"
-        "Вас пригласили в workspace Code9 Analytics.\n"
+        "Вас пригласили в workspace CODE9 Analytics.\n"
         "Код для завершения регистрации: {code}\n\n"
         "Код действителен 15 минут.\n\n"
-        "— Code9 Analytics"
+        "— CODE9 Analytics"
     ),
 }
 
-_DEFAULT_SUBJECT = "Code9: подтверждение действия"
+_DEFAULT_SUBJECT = "CODE9: подтверждение действия"
 _DEFAULT_BODY = (
     "Ваш код подтверждения: {code}\n"
     "Код действителен 15 минут.\n"
     "Если вы не запрашивали действие — проигнорируйте письмо.\n"
-    "— Code9 Analytics"
+    "— CODE9 Analytics"
 )
 
 
@@ -274,9 +283,9 @@ def reset_backend() -> None:
 
 def send_verification_code(email: str, code: str, purpose: str) -> None:
     """
-    Шлёт e-mail с кодом (6-значным в Code9).
+    Шлёт e-mail с кодом (6-значным в CODE9).
 
-    ``purpose``: 'email_verify' | 'password_reset' | 'connection_delete' | 'invite'.
+    ``purpose``: 'email_verify' | 'email_change' | 'password_reset' | 'connection_delete' | 'invite'.
     """
     subject, body = _render_verification(code, purpose)
     _send(email, subject, body, purpose=purpose)

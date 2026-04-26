@@ -1,25 +1,41 @@
-import { Header } from '@/components/landing/Header';
-import { Hero } from '@/components/landing/Hero';
-import { Features } from '@/components/landing/Features';
-import { Integrations } from '@/components/landing/Integrations';
-import { Pricing } from '@/components/landing/Pricing';
-import { FAQ } from '@/components/landing/FAQ';
-import { CTA } from '@/components/landing/CTA';
-import { Footer } from '@/components/landing/Footer';
+import type { Metadata } from 'next';
+import { getMarketingStaticPage } from '@/lib/marketingStaticPage';
+import { StaticMarketingPage } from '@/components/marketing/StaticMarketingPage';
 
-export default function LandingPage() {
+export const dynamic = 'force-static';
+
+export const metadata: Metadata = {
+  title: 'CODE9 — AI-платформа для отдела продаж',
+  description:
+    'CODE9 подключается к amoCRM, строит дашборды, анализирует продажи, звонки, переписки и помогает отделу продаж работать быстрее.',
+};
+
+export default function LandingPage({ params }: { params: { locale: string } }) {
+  const page = getMarketingStaticPage('landing', params.locale);
+
   return (
     <>
-      <Header />
-      <main>
-        <Hero />
-        <Features />
-        <Integrations />
-        <Pricing />
-        <FAQ />
-        <CTA />
-      </main>
-      <Footer />
+      <MarketingThemeScript />
+      <StaticMarketingPage {...page} locale={params.locale} page="landing" />
     </>
+  );
+}
+
+function MarketingThemeScript() {
+  return (
+    <script
+      dangerouslySetInnerHTML={{
+        __html: `
+          try {
+            var theme = localStorage.getItem('code9-theme') || localStorage.getItem('code9_theme') || 'dark';
+            document.documentElement.setAttribute('data-theme', theme);
+            document.documentElement.classList.toggle('dark', theme === 'dark');
+          } catch (_) {
+            document.documentElement.setAttribute('data-theme', 'dark');
+            document.documentElement.classList.add('dark');
+          }
+        `,
+      }}
+    />
   );
 }

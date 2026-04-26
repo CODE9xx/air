@@ -34,7 +34,8 @@ export function RegisterForm() {
 
   const onSubmit = async (values: FormValues) => {
     try {
-      await api.post('/auth/register', { email: values.email, password: values.password, locale }, { scope: 'public' });
+      const backendLocale = locale === 'ru' || locale === 'en' ? locale : 'en';
+      await api.post('/auth/register', { email: values.email, password: values.password, locale: backendLocale }, { scope: 'public' });
       router.push(`/${locale}/verify-email?email=${encodeURIComponent(values.email)}`);
     } catch (err) {
       const key = mapAuthErrorKey(err);
