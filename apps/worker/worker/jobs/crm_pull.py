@@ -62,6 +62,10 @@ from ._common import (
 logger = logging.getLogger("code9.worker.crm_pull")
 
 MOCK_CRM_MODE = os.getenv("MOCK_CRM_MODE", "true").lower() == "true"
+AMOCRM_GLOBAL_NOTES_ENABLED = os.getenv("AMOCRM_GLOBAL_NOTES_ENABLED", "false").lower() == "true"
+AMOCRM_TIMELINE_MESSAGES_ENABLED = (
+    os.getenv("AMOCRM_TIMELINE_MESSAGES_ENABLED", "false").lower() == "true"
+)
 
 # Порог, ниже которого перед pull'ом принудительно рефрешимся inline.
 _ACCESS_TOKEN_REFRESH_THRESHOLD_SECONDS = 120
@@ -2554,23 +2558,37 @@ def pull_amocrm_core(
                     counts={**counts, "tasks_processed": tasks_processed},
                 )
 
-                notes_processed, calls_processed = _pull_notes(
-                    sess,
-                    connector,
-                    access_token,
-                    user_map=user_map,
-                    deal_map=deal_map,
-                    contact_map=contact_map,
-                    since=since,
-                    schema=schema,
-                    progress=lambda n: update_job_progress(
-                        job_row_id,
-                        stage="notes",
-                        completed_steps=11,
-                        total_steps=total_steps,
-                        counts={**counts, "notes_imported": n},
-                    ),
-                )
+                if AMOCRM_GLOBAL_NOTES_ENABLED:
+                    notes_processed, calls_processed = _pull_notes(
+                        sess,
+                        connector,
+                        access_token,
+                        user_map=user_map,
+                        deal_map=deal_map,
+                        contact_map=contact_map,
+                        since=since,
+                        schema=schema,
+                        progress=lambda n: update_job_progress(
+                            job_row_id,
+                            stage="notes",
+                            completed_steps=11,
+                            total_steps=total_steps,
+                            counts={**counts, "notes_imported": n},
+                        ),
+                    )
+                    notes_skipped_reason = None
+                else:
+                    # The global /leads/notes endpoint is not scoped by the
+                    # selected export pipelines and can stall large accounts.
+                    # Keep this phase non-blocking until notes/calls are
+                    # imported through scoped timeline/channel integrations.
+                    notes_processed = 0
+                    calls_processed = 0
+                    notes_skipped_reason = "global_notes_disabled"
+                    logger.info(
+                        "amocrm_global_notes_import_skipped",
+                        extra={"schema": schema, "reason": notes_skipped_reason},
+                    )
                 counts["notes"] = _tenant_table_count(sess, schema=schema, table="notes")
                 counts["calls"] = _tenant_table_count(sess, schema=schema, table="calls")
                 update_job_progress(
@@ -2582,28 +2600,47 @@ def pull_amocrm_core(
                         **counts,
                         "notes_processed": notes_processed,
                         "calls_processed": calls_processed,
+                        "notes_skipped_reason": notes_skipped_reason,
                     },
                 )
 
-                messages_processed, chats_processed, messages_coverage = _pull_timeline_messages(
-                    sess,
-                    connector,
-                    access_token,
-                    user_map=user_map,
-                    contact_map=contact_map,
-                    deal_rows=selected_deal_rows,
-                    contact_rows=selected_contact_rows,
-                    created_from=created_from,
-                    created_to=created_to,
-                    schema=schema,
-                    progress=lambda n: update_job_progress(
-                        job_row_id,
-                        stage="messages",
-                        completed_steps=12,
-                        total_steps=total_steps,
-                        counts={**counts, "messages_imported": n},
-                    ),
-                )
+                if AMOCRM_TIMELINE_MESSAGES_ENABLED:
+                    messages_processed, chats_processed, messages_coverage = _pull_timeline_messages(
+                        sess,
+                        connector,
+                        access_token,
+                        user_map=user_map,
+                        contact_map=contact_map,
+                        deal_rows=selected_deal_rows,
+                        contact_rows=selected_contact_rows,
+                        created_from=created_from,
+                        created_to=created_to,
+                        schema=schema,
+                        progress=lambda n: update_job_progress(
+                            job_row_id,
+                            stage="messages",
+                            completed_steps=12,
+                            total_steps=total_steps,
+                            counts={**counts, "messages_imported": n},
+                        ),
+                    )
+                else:
+                    # amoCRM AJAX timeline/inbox is experimental and can hang
+                    # per account. Keep core exports reliable; re-enable this
+                    # only after adding bounded paging/time limits per scope.
+                    messages_processed = 0
+                    chats_processed = 0
+                    messages_coverage = {
+                        "messages_imported": 0,
+                        "chats_seen": 0,
+                        "chats_matched": 0,
+                        "unmatched_chats": 0,
+                        "skipped_reason": "timeline_messages_disabled",
+                    }
+                    logger.info(
+                        "amocrm_timeline_messages_import_skipped",
+                        extra={"schema": schema, "reason": "timeline_messages_disabled"},
+                    )
                 counts["chats"] = _tenant_table_count(sess, schema=schema, table="chats")
                 counts["messages"] = _tenant_table_count(sess, schema=schema, table="messages")
                 update_job_progress(

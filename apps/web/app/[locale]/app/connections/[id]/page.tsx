@@ -44,6 +44,7 @@ type ExportOptions = {
 
 type JobStatus = {
   id: string;
+  kind?: string;
   status: 'queued' | 'running' | 'succeeded' | 'failed' | string;
   error?: string | null;
   queue_position?: number | null;
@@ -144,6 +145,24 @@ export default function ConnectionDetailPage() {
     } finally {
       setExportOptionsLoading(false);
     }
+  };
+
+  const attachActivePullJob = async () => {
+    if (!conn) return false;
+    const jobs = await api.get<JobStatus[]>(`/crm/connections/${conn.id}/jobs`);
+    const activeJob = jobs.find(
+      (job) =>
+        job.kind === 'pull_amocrm_core' &&
+        (job.status === 'queued' || job.status === 'running'),
+    );
+    if (!activeJob) return false;
+    setExportJobId(activeJob.id);
+    setExportJobStatus(activeJob.status);
+    setExportJobProgress(activeJob.result?.progress ?? null);
+    setExportJobMeta(activeJob);
+    setActiveJobKind('sync');
+    setSyncRunning(true);
+    return true;
   };
 
   useEffect(() => {
@@ -305,8 +324,17 @@ export default function ConnectionDetailPage() {
       setExportJobMeta(null);
       setActiveJobKind('export');
       toast({ kind: 'success', title: tActions('realExportStarted') });
-    } catch {
-      toast({ kind: 'error', title: tCommon('error') });
+    } catch (error) {
+      if (error instanceof ApiError && error.code === 'sync_already_running') {
+        try {
+          await attachActivePullJob();
+        } catch {
+          // The conflict itself is enough to explain the state to the user.
+        }
+        toast({ kind: 'info', title: tActions('syncAlreadyRunning') });
+      } else {
+        toast({ kind: 'error', title: tCommon('error') });
+      }
       setExportRunning(false);
     }
   };
