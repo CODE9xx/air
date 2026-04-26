@@ -10,6 +10,7 @@ tenant_schema=NULL (его создаёт bootstrap_tenant_schema job).
 """
 from __future__ import annotations
 
+import logging
 import re
 import secrets
 import uuid
@@ -19,6 +20,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import and_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.concurrency import run_in_threadpool
 
 from app.auth.dependencies import (
     get_current_user,
@@ -34,6 +36,7 @@ from app.billing.tokens import (
 from app.core.db import get_session
 from app.core.email import send_verification_code
 from app.core.jobs import enqueue, queue_for_kind
+from app.core.crypto import decrypt_token
 from app.core.security import generate_email_code, hash_secret, verify_secret
 from app.core.settings import get_settings
 from app.crm.schemas import (
@@ -55,6 +58,7 @@ from app.db.models import (
 )
 
 router = APIRouter(prefix="/crm", tags=["crm"])
+logger = logging.getLogger(__name__)
 
 # Workspace-scoped router (Task #52.4) — монтируется без prefix="/crm",
 # чтобы путь был абсолютным `/workspaces/{workspace_id}/crm/connections`
@@ -824,6 +828,10 @@ async def export_options(
             item["stages"].append(
                 {"id": str(row[2]), "name": row[3] or str(row[2]), "sort_order": row[4]}
             )
+    if not pipelines:
+        live_options = await run_in_threadpool(_live_amocrm_export_options, conn)
+        if live_options is not None:
+            return live_options
     return {
         "connection_id": str(conn.id),
         "pipelines": list(pipelines.values()),
@@ -975,6 +983,94 @@ def _estimate_export_duration_seconds(estimated_records: int) -> int:
     # precision for tiny or very large accounts.
     seconds = int(_FULL_EXPORT_MIN_DURATION_SECONDS + (estimated_records / 20))
     return min(_FULL_EXPORT_MAX_DURATION_SECONDS, max(_FULL_EXPORT_MIN_DURATION_SECONDS, seconds))
+
+
+def _amocrm_subdomain_from_connection(conn: CrmConnection) -> str | None:
+    """Return amoCRM subdomain without exposing account URLs or tokens."""
+    domain = (conn.external_domain or "").strip().lower()
+    if domain.startswith("https://"):
+        domain = domain.removeprefix("https://")
+    elif domain.startswith("http://"):
+        domain = domain.removeprefix("http://")
+    domain = domain.split("/", 1)[0]
+    if domain.endswith(".amocrm.ru"):
+        return domain.removesuffix(".amocrm.ru")
+    if domain and "." not in domain:
+        return domain
+    metadata = conn.metadata_json or {}
+    account = metadata.get("amo_account")
+    if isinstance(account, dict):
+        subdomain = account.get("subdomain")
+        if isinstance(subdomain, str) and subdomain.strip():
+            return subdomain.strip().lower()
+    return None
+
+
+def _live_amocrm_export_options(conn: CrmConnection) -> dict[str, Any] | None:
+    """Best-effort live amoCRM pipeline options for brand-new empty tenants.
+
+    The regular source is the tenant cache. New external_button installs can
+    have a tenant schema before the first sync has populated pipelines/stages.
+    In that state the UI still needs a pipeline selector, so this read-only
+    fallback calls amoCRM directly using the already stored access token.
+    """
+    if conn.provider != "amocrm" or conn.status in {"deleted", "deleting"}:
+        return None
+    if not conn.access_token_encrypted:
+        return None
+    subdomain = _amocrm_subdomain_from_connection(conn)
+    if not subdomain:
+        return None
+
+    try:
+        access_token = decrypt_token(conn.access_token_encrypted)
+        from crm_connectors.amocrm import AmoCrmConnector  # type: ignore
+
+        connector = AmoCrmConnector(subdomain=subdomain)
+        pipelines = {
+            item.crm_id: {
+                "id": item.crm_id,
+                "name": item.name or item.crm_id,
+                "stages": [],
+            }
+            for item in connector.fetch_pipelines(access_token)
+            if item.crm_id
+        }
+        for stage in connector.fetch_stages(access_token):
+            if not stage.pipeline_id or not stage.crm_id:
+                continue
+            pipeline = pipelines.setdefault(
+                stage.pipeline_id,
+                {"id": stage.pipeline_id, "name": stage.pipeline_id, "stages": []},
+            )
+            pipeline["stages"].append(
+                {
+                    "id": stage.crm_id,
+                    "name": stage.name or stage.crm_id,
+                    "sort_order": stage.sort_order,
+                }
+            )
+    except Exception as exc:
+        logger.warning(
+            "amocrm_export_options_live_fallback_failed",
+            extra={"connection_id": str(conn.id), "error_type": type(exc).__name__},
+        )
+        return None
+
+    for pipeline in pipelines.values():
+        pipeline["stages"].sort(
+            key=lambda item: (
+                item.get("sort_order") is None,
+                item.get("sort_order") or 0,
+                item.get("name") or "",
+            )
+        )
+    return {
+        "connection_id": str(conn.id),
+        "pipelines": list(pipelines.values()),
+        "source": "amocrm_live",
+        "empty_reason": None if pipelines else "no_real_pipelines_live",
+    }
 
 
 @router.post("/connections/{connection_id}/full-export/quote")

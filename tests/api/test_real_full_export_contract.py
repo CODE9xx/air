@@ -16,6 +16,18 @@ def test_export_options_route_exists():
     assert any(p == expected and "GET" in methods for p, methods in paths), paths
 
 
+def test_export_options_have_live_amocrm_fallback_for_empty_tenant_cache():
+    from app.crm import router as crm_router
+
+    src = inspect.getsource(crm_router.export_options)
+    fallback_src = inspect.getsource(crm_router._live_amocrm_export_options)
+
+    assert "run_in_threadpool(_live_amocrm_export_options, conn)" in src
+    assert "connector.fetch_pipelines(access_token)" in fallback_src
+    assert "connector.fetch_stages(access_token)" in fallback_src
+    assert '"source": "amocrm_live"' in fallback_src
+
+
 def test_full_export_uses_pull_amocrm_core_without_billing_gate():
     from app.crm import router as crm_router
 
