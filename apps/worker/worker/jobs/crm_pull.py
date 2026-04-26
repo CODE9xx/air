@@ -2095,6 +2095,7 @@ def pull_amocrm_core(
     cleanup_trial: bool = False,
     deals_limit: int | None = None,
     contacts_limit: int | None = None,
+    export_estimate: dict[str, Any] | None = None,
     auto_sync: bool = False,
     job_row_id: str | None = None,
 ) -> dict[str, Any]:
@@ -2113,6 +2114,9 @@ def pull_amocrm_core(
         cleanup_trial: удалить только Code9 trial rows ``ext-*`` перед
             реальной выгрузкой, чтобы mock-данные не смешались с amoCRM.
         deals_limit / contacts_limit: верхние отсечки (для trial/audit).
+        export_estimate: UI/API estimate snapshot stored in public.jobs.payload.
+            Worker does not need it for import logic, but accepts it because
+            enqueue passes payload keys as kwargs.
         auto_sync: True для scheduler-driven incremental sync.
         job_row_id: UUID public.jobs, проставляется enqueue-логикой.
 
