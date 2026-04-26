@@ -26,3 +26,11 @@ def test_pull_job_accepts_api_export_estimate_payload_key():
 
     assert "export_estimate: dict[str, Any] | None = None" in source
     assert "enqueue passes payload keys as kwargs" in source
+
+
+def test_full_export_events_import_is_disabled_by_default():
+    source = (ROOT / "apps/worker/worker/jobs/crm_pull.py").read_text(encoding="utf-8")
+
+    assert 'AMOCRM_FULL_EXPORT_EVENTS_ENABLED", "false"' in source
+    assert "if since is None and not AMOCRM_FULL_EXPORT_EVENTS_ENABLED:" in source
+    assert 'events_skipped_reason = "full_export_events_disabled"' in source

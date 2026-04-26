@@ -66,6 +66,9 @@ AMOCRM_GLOBAL_NOTES_ENABLED = os.getenv("AMOCRM_GLOBAL_NOTES_ENABLED", "false").
 AMOCRM_TIMELINE_MESSAGES_ENABLED = (
     os.getenv("AMOCRM_TIMELINE_MESSAGES_ENABLED", "false").lower() == "true"
 )
+AMOCRM_FULL_EXPORT_EVENTS_ENABLED = (
+    os.getenv("AMOCRM_FULL_EXPORT_EVENTS_ENABLED", "false").lower() == "true"
+)
 
 # Порог, ниже которого перед pull'ом принудительно рефрешимся inline.
 _ACCESS_TOKEN_REFRESH_THRESHOLD_SECONDS = 120
@@ -2662,27 +2665,40 @@ def pull_amocrm_core(
                     },
                 )
 
-                events_processed = _pull_events(
-                    sess,
-                    connector,
-                    access_token,
-                    since=since,
-                    schema=schema,
-                    progress=lambda n: update_job_progress(
-                        job_row_id,
-                        stage="events",
-                        completed_steps=13,
-                        total_steps=total_steps,
-                        counts={**counts, "events_imported": n},
-                    ),
-                )
+                events_skipped_reason: str | None = None
+                if since is None and not AMOCRM_FULL_EXPORT_EVENTS_ENABLED:
+                    events_processed = 0
+                    events_skipped_reason = "full_export_events_disabled"
+                    logger.info(
+                        "amocrm_full_export_events_import_skipped",
+                        extra={"schema": schema, "reason": events_skipped_reason},
+                    )
+                else:
+                    events_processed = _pull_events(
+                        sess,
+                        connector,
+                        access_token,
+                        since=since,
+                        schema=schema,
+                        progress=lambda n: update_job_progress(
+                            job_row_id,
+                            stage="events",
+                            completed_steps=13,
+                            total_steps=total_steps,
+                            counts={**counts, "events_imported": n},
+                        ),
+                    )
                 counts["events"] = _tenant_table_count(sess, schema=schema, table="raw_events")
                 update_job_progress(
                     job_row_id,
                     stage="events",
                     completed_steps=14,
                     total_steps=total_steps,
-                    counts={**counts, "events_processed": events_processed},
+                    counts={
+                        **counts,
+                        "events_processed": events_processed,
+                        "events_skipped_reason": events_skipped_reason,
+                    },
                 )
 
                 stage_transitions_processed = _pull_stage_transitions(
