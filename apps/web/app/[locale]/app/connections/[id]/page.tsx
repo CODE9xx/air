@@ -126,6 +126,26 @@ export default function ConnectionDetailPage() {
     setConn(res);
   };
 
+  const loadExportOptions = async (resetSelection = false) => {
+    if (!conn) return null;
+    setExportOptionsLoading(true);
+    try {
+      const options = await api.get<ExportOptions>(`/crm/connections/${conn.id}/export/options`);
+      setExportOptions(options);
+      setSelectedPipelineIds((current) => {
+        const nextIds = options.pipelines.map((p) => p.id);
+        if (resetSelection || current.length === 0) return nextIds;
+        return current.filter((id) => nextIds.includes(id));
+      });
+      return options;
+    } catch {
+      toast({ kind: 'error', title: tCommon('error') });
+      return null;
+    } finally {
+      setExportOptionsLoading(false);
+    }
+  };
+
   useEffect(() => {
     if (!id) return;
     (async () => {
@@ -205,17 +225,8 @@ export default function ConnectionDetailPage() {
   const openRealExportSetup = async () => {
     if (!conn) return;
     setShowExportSetup(true);
-    if (exportOptions) return;
-    setExportOptionsLoading(true);
-    try {
-      const options = await api.get<ExportOptions>(`/crm/connections/${conn.id}/export/options`);
-      setExportOptions(options);
-      setSelectedPipelineIds(options.pipelines.map((p) => p.id));
-    } catch {
-      toast({ kind: 'error', title: tCommon('error') });
-    } finally {
-      setExportOptionsLoading(false);
-    }
+    if (exportOptions?.pipelines.length) return;
+    await loadExportOptions(true);
   };
 
   const applyPreset = (preset: ExportPreset) => {
@@ -334,6 +345,9 @@ export default function ConnectionDetailPage() {
           setExportRunning(false);
           setSyncRunning(false);
           await reloadConnection();
+          if (showExportSetup) {
+            await loadExportOptions(exportOptions?.pipelines.length === 0);
+          }
           toast({
             kind: 'success',
             title: activeJobKind === 'sync' ? tActions('syncDone') : tActions('realExportDone'),
