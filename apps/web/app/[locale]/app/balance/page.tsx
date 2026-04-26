@@ -20,6 +20,7 @@ import {
   WalletCards,
 } from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
+import { isCustomerVisibleCrmConnection } from '@/lib/connectionVisibility';
 import type { CrmConnection, DadataPartySuggestion, PaymentCreateResponse, TokenAccount, TokenLedgerEntry } from '@/lib/types';
 import { getTopUpPacks } from '@/lib/pricing';
 import { formatDate, formatNumber, toIntlLocale } from '@/lib/utils';
@@ -65,7 +66,7 @@ export default function BalancePage() {
         if (cancelled) return;
         setAccount(tokenAccount);
         setLedger(tokenLedger.items ?? []);
-        setConnections(crmConnections ?? []);
+        setConnections((crmConnections ?? []).filter(isCustomerVisibleCrmConnection));
       })
       .catch(() => {
         if (cancelled) return;

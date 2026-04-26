@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import { cn, formatNumber, toIntlLocale } from '@/lib/utils';
 import { api } from '@/lib/api';
+import { isCustomerVisibleCrmConnection } from '@/lib/connectionVisibility';
 import { getPricingPlans } from '@/lib/pricing';
 import { useUserAuth } from '@/components/providers/AuthProvider';
 import { BrandLockup } from '@/components/BrandLockup';
@@ -50,8 +51,11 @@ export function Sidebar() {
       .get<CrmConnection[]>(`/workspaces/${workspaceId}/crm/connections`)
       .then((connections) => {
         if (cancelled) return;
+        const visibleConnections = connections.filter(isCustomerVisibleCrmConnection);
         const activeConnection =
-          connections.find((connection) => connection.status === 'active') ?? connections[0] ?? null;
+          visibleConnections.find((connection) => connection.status === 'active') ??
+          visibleConnections[0] ??
+          null;
         setDashboardBuilderHref(
           activeConnection
             ? `/${locale}/app/connections/${activeConnection.id}/dashboard-builder`

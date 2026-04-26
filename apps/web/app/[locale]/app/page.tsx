@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useLocale, useTranslations } from 'next-intl';
 import { api } from '@/lib/api';
 import type { CrmConnection } from '@/lib/types';
+import { isCustomerVisibleCrmConnection } from '@/lib/connectionVisibility';
 import { useUserAuth } from '@/components/providers/AuthProvider';
 import { Skeleton } from '@/components/ui/Skeleton';
 
@@ -26,7 +27,7 @@ export default function CabinetHomePage() {
     (async () => {
       try {
         const res = await api.get<CrmConnection[]>(`/workspaces/${wsId}/crm/connections`);
-        setConnections(res);
+        setConnections(res.filter(isCustomerVisibleCrmConnection));
       } catch {
         setConnections([]);
       }

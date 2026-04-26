@@ -21,6 +21,7 @@ import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { useUserAuth } from '@/components/providers/AuthProvider';
 import { api } from '@/lib/api';
+import { isCustomerVisibleCrmConnection } from '@/lib/connectionVisibility';
 import { cn } from '@/lib/utils';
 import type { CrmConnection } from '@/lib/types';
 
@@ -587,11 +588,12 @@ export default function AiActionsPage() {
       .get<CrmConnection[]>(`/workspaces/${workspaceId}/crm/connections`)
       .then((items) => {
         if (cancelled) return;
-        setConnections(items);
+        const visibleItems = items.filter(isCustomerVisibleCrmConnection);
+        setConnections(visibleItems);
         const activeConnection =
-          items.find((connection) => connection.provider === 'amocrm' && connection.status === 'active') ??
-          items.find((connection) => connection.provider === 'amocrm') ??
-          items[0] ??
+          visibleItems.find((connection) => connection.provider === 'amocrm' && connection.status === 'active') ??
+          visibleItems.find((connection) => connection.provider === 'amocrm') ??
+          visibleItems[0] ??
           null;
         setSelectedConnectionId(activeConnection?.id ?? null);
       })

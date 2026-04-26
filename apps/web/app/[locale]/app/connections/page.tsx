@@ -6,6 +6,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { useLocale, useTranslations } from 'next-intl';
 import { api } from '@/lib/api';
 import type { CrmConnection } from '@/lib/types';
+import { isCustomerVisibleCrmConnection } from '@/lib/connectionVisibility';
 import { useUserAuth } from '@/components/providers/AuthProvider';
 import { ConnectionCard } from '@/components/cabinet/ConnectionCard';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -57,7 +58,7 @@ export default function ConnectionsPage() {
     (async () => {
       try {
         const res = await api.get<CrmConnection[]>(`/workspaces/${wsId}/crm/connections`);
-        setConns(res);
+        setConns(res.filter(isCustomerVisibleCrmConnection));
       } catch {
         setConns([]);
       }

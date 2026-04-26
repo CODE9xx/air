@@ -7,6 +7,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { api, ApiError } from '@/lib/api';
+import { isCustomerVisibleCrmConnection } from '@/lib/connectionVisibility';
 import type {
   AmoButtonConfig,
   AmoOAuthStartResponse,
@@ -19,9 +20,7 @@ import { AmoCrmExternalButton } from '@/components/integrations/AmoCrmExternalBu
 /**
  * Страница «Новое подключение».
  *
- * Три режима подключения amoCRM:
- *   — mock (legacy): кнопка «mock» создаёт фейковое подключение через
- *     `POST /crm/connections/mock-amocrm`. Остаётся для demo/dev.
+ * Два режима подключения amoCRM:
  *   — real OAuth (static_client): `GET /integrations/amocrm/oauth/start`
  *     возвращает `authorize_url` → редиректим юзера на amoCRM consent.
  *   — real OAuth (external_button, #44.6 v3 / #51.1):
@@ -58,7 +57,6 @@ export default function NewConnectionPage() {
   const wsId = user?.workspaces?.[0]?.id ?? null;
 
   const [loadingOAuth, setLoadingOAuth] = useState(false);
-  const [loadingMock, setLoadingMock] = useState(false);
   const [buttonConfig, setButtonConfig] = useState<AmoButtonConfig | null>(null);
   const [externalStart, setExternalStart] = useState<ExternalButtonStart | null>(
     null,
@@ -105,7 +103,7 @@ export default function NewConnectionPage() {
         const rows = await api.get<CrmConnection[]>(
           `/workspaces/${wsId}/crm/connections`,
         );
-        if (!cancelled) setExistingConnections(rows);
+        if (!cancelled) setExistingConnections(rows.filter(isCustomerVisibleCrmConnection));
       } catch {
         if (!cancelled) setExistingConnections([]);
       } finally {
@@ -180,39 +178,6 @@ export default function NewConnectionPage() {
           : t('oauthError');
       toast({ kind: 'error', title: msg });
       setLoadingOAuth(false);
-    }
-  };
-
-  const connectMock = async () => {
-    if (!wsId) {
-      toast({ kind: 'error', title: tCommon('error') });
-      return;
-    }
-    if (blocksNewCrm) {
-      toast({ kind: 'info', title: t('singleCrmConflict') });
-      openExistingConnection();
-      return;
-    }
-    setLoadingMock(true);
-    try {
-      const res = await api.post<CrmConnection>(
-        '/crm/connections/mock-amocrm',
-        { name: 'amoCRM (mock)' },
-      );
-      router.push(`/${locale}/app/connections/${res.id}`);
-    } catch (err) {
-      const title =
-        err instanceof ApiError && err.code === 'crm_connection_exists'
-          ? t('singleCrmConflict')
-          : tCommon('error');
-      toast({
-        kind:
-          err instanceof ApiError && err.code === 'crm_connection_exists'
-            ? 'info'
-            : 'error',
-        title,
-      });
-      setLoadingMock(false);
     }
   };
 
@@ -333,20 +298,6 @@ export default function NewConnectionPage() {
                 }
               >
                 {t('connectOAuth')}
-              </Button>
-              <Button
-                variant="secondary"
-                onClick={connectMock}
-                loading={loadingMock}
-                disabled={
-                  !ready ||
-                  !wsId ||
-                  checkingExisting ||
-                  blocksNewCrm ||
-                  canRetryExistingOAuth
-                }
-              >
-                {t('connectMock')}
               </Button>
               {blocksNewCrm && (
                 <p className="text-xs text-muted-foreground">

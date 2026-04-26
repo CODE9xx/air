@@ -4,6 +4,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 PAGE = ROOT / "apps/web/app/[locale]/app/connections/new/page.tsx"
 PUBLIC = ROOT / "apps/web/public"
+MESSAGES = [
+    ROOT / "apps/web/messages/ru.json",
+    ROOT / "apps/web/messages/en.json",
+    ROOT / "apps/web/messages/es.json",
+]
 
 
 def test_connections_new_page_uses_crm_logo_assets() -> None:
@@ -49,3 +54,19 @@ def test_connections_new_page_hides_external_button_technical_details() -> None:
     assert "externalButtonWebhookLabel" not in source
     assert "buttonConfig?.secrets_uri" not in source
     assert "buttonConfig?.webhook_url" not in source
+
+
+def test_connections_new_page_does_not_show_mock_crm_action() -> None:
+    source = PAGE.read_text(encoding="utf-8")
+
+    assert "connectMock" not in source
+    assert "/crm/connections/mock-amocrm" not in source
+    assert "amoCRM (mock)" not in source
+
+
+def test_connection_messages_do_not_expose_mock_amocrm_cta() -> None:
+    for path in MESSAGES:
+        messages = path.read_text(encoding="utf-8")
+        assert "connectMock" not in messages
+        assert "mockNote" not in messages
+        assert "amoCRM (mock)" not in messages
