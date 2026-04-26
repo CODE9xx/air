@@ -15,6 +15,13 @@ from sqlalchemy import desc, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import get_current_admin, require_admin_role
+from app.billing.tokens import (
+    PLAN_MONTHLY_TOKENS,
+    credit_tokens,
+    get_or_create_token_account,
+    token_account_snapshot,
+    tokens_to_mtokens,
+)
 from app.core.db import get_session
 from app.core.jobs import enqueue, queue_for_kind
 from app.core.rate_limit import client_ip, rate_limit
@@ -51,6 +58,14 @@ class AdminLoginRequest(BaseModel):
 
 class BillingAdjustRequest(BaseModel):
     amount_cents: int
+    reason: str = Field(min_length=1, max_length=500)
+
+
+class ManualWorkspaceBillingRequest(BaseModel):
+    plan_key: str = Field(min_length=1, max_length=32)
+    period_months: int = Field(default=0, ge=0, le=120)
+    expires_at: datetime | None = None
+    add_tokens: int = Field(default=0, ge=0, le=100_000_000)
     reason: str = Field(min_length=1, max_length=500)
 
 
@@ -145,6 +160,7 @@ async def admin_workspaces(
                 "  COALESCE(ta.plan_key, 'free') AS token_plan, "
                 "  COALESCE(ta.balance_mtokens, 0) AS balance_mtokens, "
                 "  COALESCE(ta.reserved_mtokens, 0) AS reserved_mtokens, "
+                "  ta.subscription_expires_at AS subscription_expires_at, "
                 "  COUNT(c.id) AS connections_count, "
                 "  COUNT(c.id) FILTER (WHERE c.status='active') AS active_connections_count, "
                 "  COUNT(c.id) FILTER (WHERE c.status IN ('error','lost_token')) AS error_connections_count, "
@@ -157,7 +173,7 @@ async def admin_workspaces(
                 f"WHERE {' AND '.join(clauses)} "
                 "GROUP BY w.id, w.name, w.slug, w.status, w.created_at, "
                 "         u.email, u.display_name, ba.plan, ta.plan_key, "
-                "         ta.balance_mtokens, ta.reserved_mtokens "
+                "         ta.balance_mtokens, ta.reserved_mtokens, ta.subscription_expires_at "
                 "ORDER BY w.created_at DESC "
                 "LIMIT :limit OFFSET :offset"
             ),
@@ -179,10 +195,11 @@ async def admin_workspaces(
             "balance_tokens": int(row[9] or 0) // 1000,
             "reserved_tokens": int(row[10] or 0) // 1000,
             "available_tokens": max(0, (int(row[9] or 0) - int(row[10] or 0)) // 1000),
-            "connections": int(row[11] or 0),
-            "active_connections": int(row[12] or 0),
-            "error_connections": int(row[13] or 0),
-            "last_error": row[14],
+            "subscription_expires_at": row[11].isoformat() if row[11] else None,
+            "connections": int(row[12] or 0),
+            "active_connections": int(row[13] or 0),
+            "error_connections": int(row[14] or 0),
+            "last_error": row[15],
         }
         for row in rows
     ]
@@ -290,6 +307,112 @@ async def admin_workspace_resume(
     )
     await session.commit()
     return {"ok": True, "status": ws.status}
+
+
+@router.post("/workspaces/{workspace_id}/manual-billing")
+async def admin_workspace_manual_billing(
+    workspace_id: uuid.UUID,
+    body: ManualWorkspaceBillingRequest,
+    request: Request,
+    admin: AdminUser = Depends(require_admin_role("superadmin")),
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    """Manually set a customer's plan/term and credit AIC9 tokens.
+
+    This is intentionally separate from real payment flows: it is founder-only,
+    audited, and writes token ledger rows only for explicit token credits.
+    """
+    if body.plan_key not in PLAN_MONTHLY_TOKENS:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"error": {"code": "invalid_plan", "message": "Unknown token plan"}},
+        )
+
+    ws = (
+        await session.execute(select(Workspace).where(Workspace.id == workspace_id))
+    ).scalar_one_or_none()
+    if not ws or ws.status == "deleted":
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"error": {"code": "not_found", "message": "Workspace not found"}},
+        )
+
+    account = await get_or_create_token_account(session, ws, for_update=True)
+    account.plan_key = body.plan_key
+    account.included_monthly_mtokens = tokens_to_mtokens(PLAN_MONTHLY_TOKENS[body.plan_key])
+
+    if body.expires_at is not None:
+        expires_at = body.expires_at
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        account.subscription_expires_at = expires_at
+    elif body.period_months > 0:
+        base = account.subscription_expires_at
+        if base is None or base <= _now():
+            base = _now()
+        account.subscription_expires_at = base + timedelta(days=30 * body.period_months)
+
+    ba = (
+        await session.execute(
+            select(BillingAccount).where(BillingAccount.workspace_id == workspace_id)
+        )
+    ).scalar_one_or_none()
+    if not ba:
+        ba = BillingAccount(
+            workspace_id=workspace_id,
+            currency="RUB",
+            plan=body.plan_key,
+            provider="manual",
+        )
+        session.add(ba)
+    else:
+        ba.plan = body.plan_key
+
+    credited_tokens = 0
+    if body.add_tokens > 0:
+        credited_tokens = body.add_tokens
+        account = await credit_tokens(
+            session,
+            workspace=ws,
+            amount_mtokens=tokens_to_mtokens(body.add_tokens),
+            description=f"Админское начисление AIC9 токенов: {body.add_tokens}",
+            reference=f"admin:{admin.id}",
+            kind="adjustment",
+            metadata={
+                "reason": body.reason,
+                "source": "admin_manual_billing",
+                "plan_key": body.plan_key,
+                "period_months": body.period_months,
+            },
+        )
+
+    session.add(
+        AdminAuditLog(
+            admin_user_id=admin.id,
+            action="workspace_manual_billing_update",
+            target_type="workspace",
+            target_id=workspace_id,
+            metadata_json={
+                "plan_key": body.plan_key,
+                "period_months": body.period_months,
+                "expires_at": account.subscription_expires_at.isoformat()
+                if account.subscription_expires_at
+                else None,
+                "add_tokens": credited_tokens,
+                "reason": body.reason,
+            },
+            ip=client_ip(request),
+            user_agent=request.headers.get("user-agent"),
+        )
+    )
+    await session.commit()
+    await session.refresh(account)
+    return {
+        "ok": True,
+        "workspace_id": str(ws.id),
+        "token_account": token_account_snapshot(account),
+        "billing_plan": ba.plan,
+    }
 
 
 # -------------------- Users --------------------
