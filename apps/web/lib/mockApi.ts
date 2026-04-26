@@ -415,9 +415,59 @@ export async function mockApi<T>(path: string, opts: RequestOptions): Promise<T>
   if (key === 'GET /admin/workspaces') {
     return {
       items: [
-        { id: 'ws-1', name: 'Acme Corp', slug: 'acme', status: 'active', plan: 'pay_as_you_go', connections: 1 },
-        { id: 'ws-2', name: 'Globex', slug: 'globex', status: 'paused', plan: 'pay_as_you_go', connections: 0 },
+        {
+          id: 'ws-1',
+          name: 'Acme Corp',
+          slug: 'acme',
+          status: 'active',
+          owner_email: 'owner@acme.test',
+          owner_name: 'Owner',
+          plan: 'enterprise',
+          billing_plan: 'enterprise',
+          token_plan: 'enterprise',
+          balance_tokens: 100000,
+          available_tokens: 95000,
+          reserved_tokens: 5000,
+          subscription_expires_at: new Date(Date.now() + 365 * 86400 * 1000).toISOString(),
+          connections: 1,
+          active_connections: 1,
+          error_connections: 0,
+          last_error: null,
+        },
+        {
+          id: 'ws-2',
+          name: 'Globex',
+          slug: 'globex',
+          status: 'paused',
+          owner_email: 'owner@globex.test',
+          owner_name: 'Owner',
+          plan: 'free',
+          billing_plan: 'free',
+          token_plan: 'free',
+          balance_tokens: 0,
+          available_tokens: 0,
+          reserved_tokens: 0,
+          subscription_expires_at: null,
+          connections: 0,
+          active_connections: 0,
+          error_connections: 0,
+          last_error: null,
+        },
       ],
+    } as T;
+  }
+  if (path.match(/^\/admin\/workspaces\/[^/]+\/manual-billing$/) && method === 'POST') {
+    return {
+      ok: true,
+      workspace_id: path.split('/')[3],
+      token_account: {
+        plan_key: body.plan_key,
+        balance_tokens: Number(body.add_tokens || 0),
+        reserved_tokens: 0,
+        available_tokens: Number(body.add_tokens || 0),
+        subscription_expires_at: body.expires_at ?? null,
+      },
+      billing_plan: body.plan_key,
     } as T;
   }
   if (key === 'GET /admin/users') {
