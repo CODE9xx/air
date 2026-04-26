@@ -61,6 +61,14 @@ from ._common import (
 
 logger = logging.getLogger("code9.worker.crm_pull")
 
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
 MOCK_CRM_MODE = os.getenv("MOCK_CRM_MODE", "true").lower() == "true"
 AMOCRM_GLOBAL_NOTES_ENABLED = os.getenv("AMOCRM_GLOBAL_NOTES_ENABLED", "false").lower() == "true"
 AMOCRM_TIMELINE_MESSAGES_ENABLED = (
@@ -69,6 +77,9 @@ AMOCRM_TIMELINE_MESSAGES_ENABLED = (
 AMOCRM_FULL_EXPORT_EVENTS_ENABLED = (
     os.getenv("AMOCRM_FULL_EXPORT_EVENTS_ENABLED", "false").lower() == "true"
 )
+AMOCRM_MESSAGES_IMPORT_LIMIT_DEFAULT = _env_int("AMOCRM_MESSAGES_IMPORT_LIMIT", 2000)
+AMOCRM_MESSAGES_ENTITY_LIMIT_DEFAULT = _env_int("AMOCRM_MESSAGES_ENTITY_LIMIT", 0)
+AMOCRM_EVENTS_IMPORT_LIMIT_DEFAULT = _env_int("AMOCRM_EVENTS_IMPORT_LIMIT", 50000)
 
 # Порог, ниже которого перед pull'ом принудительно рефрешимся inline.
 _ACCESS_TOKEN_REFRESH_THRESHOLD_SECONDS = 120
@@ -540,7 +551,7 @@ def _load_selected_deal_rows(
             f"FROM {q_schema}.deals d "
             f"LEFT JOIN {q_schema}.pipelines p ON p.id = d.pipeline_id "
             f"WHERE {' AND '.join(clauses)} "
-            "ORDER BY d.created_at_external NULLS LAST, d.external_id"
+            "ORDER BY d.created_at_external DESC NULLS LAST, d.external_id"
         ),
         params,
     ).fetchall()
@@ -574,13 +585,13 @@ def _load_selected_contact_rows(
         params.update(pipeline_params)
     rows = sess.execute(
         text(
-            f"SELECT DISTINCT c.external_id, c.id "
+            f"SELECT DISTINCT c.external_id, c.id, c.created_at_external "
             f"FROM {q_schema}.deals d "
             f"LEFT JOIN {q_schema}.pipelines p ON p.id = d.pipeline_id "
             f"LEFT JOIN {q_schema}.deal_contacts dc ON dc.deal_id = d.id "
             f"LEFT JOIN {q_schema}.contacts c ON c.id = COALESCE(dc.contact_id, d.contact_id) "
             f"WHERE {' AND '.join(clauses)} "
-            "ORDER BY c.external_id"
+            "ORDER BY c.created_at_external DESC NULLS LAST, c.external_id"
         ),
         params,
     ).fetchall()
@@ -1807,12 +1818,13 @@ def _pull_events(
     access_token: str,
     *,
     since: datetime | None,
+    limit: int | None = None,
     schema: str,
     progress: Callable[[int], None] | None = None,
 ) -> int:
     """Pull raw amoCRM events for stage history and timeline analytics."""
     processed = 0
-    for raw_e in connector.fetch_events(access_token, since=since):
+    for raw_e in connector.fetch_events(access_token, since=since, limit=limit):
         ext_id = raw_e.crm_id
         if not ext_id:
             continue
@@ -1835,6 +1847,8 @@ def _pull_timeline_messages(
     contact_rows: list[tuple[str, str]] | None = None,
     created_from: datetime | None,
     created_to: datetime | None,
+    limit: int | None = None,
+    entity_limit: int | None = None,
     schema: str,
     progress: Callable[[int], None] | None = None,
 ) -> tuple[int, int, dict[str, Any]]:
@@ -1851,6 +1865,20 @@ def _pull_timeline_messages(
     processed = 0
     seen_chats: set[str] = set()
     skipped: list[str] = []
+    scoped_deal_rows = deal_rows or []
+    scoped_contact_rows = contact_rows or []
+    if entity_limit is not None:
+        if entity_limit <= 0:
+            skipped.append("timeline_entity_scan_disabled")
+            scoped_deal_rows = []
+            scoped_contact_rows = []
+        else:
+            if len(scoped_deal_rows) > entity_limit:
+                skipped.append("deal_entity_limit_reached")
+                scoped_deal_rows = scoped_deal_rows[:entity_limit]
+            if len(scoped_contact_rows) > entity_limit:
+                skipped.append("contact_entity_limit_reached")
+                scoped_contact_rows = scoped_contact_rows[:entity_limit]
 
     def upsert_message(raw_m) -> None:
         nonlocal processed
@@ -1931,13 +1959,16 @@ def _pull_timeline_messages(
         _report_stage_items(progress, processed)
 
     try:
-        if callable(fetch_deal_messages) and deal_rows:
+        if callable(fetch_deal_messages) and scoped_deal_rows:
             for raw_m in fetch_deal_messages(
                 access_token,
-                [external_id for external_id, _ in deal_rows],
+                [external_id for external_id, _ in scoped_deal_rows],
                 created_from=created_from,
                 created_to=created_to,
+                limit=limit,
             ):
+                if limit is not None and processed >= limit:
+                    break
                 upsert_message(raw_m)
     except Exception as exc:
         logger.warning(
@@ -1947,13 +1978,17 @@ def _pull_timeline_messages(
         skipped.append(f"deals:{type(exc).__name__}")
 
     try:
-        if callable(fetch_contact_messages) and contact_rows:
+        remaining_limit = None if limit is None else max(0, limit - processed)
+        if callable(fetch_contact_messages) and scoped_contact_rows and remaining_limit != 0:
             for raw_m in fetch_contact_messages(
                 access_token,
-                [external_id for external_id, _ in contact_rows],
+                [external_id for external_id, _ in scoped_contact_rows],
                 created_from=created_from,
                 created_to=created_to,
+                limit=remaining_limit,
             ):
+                if limit is not None and processed >= limit:
+                    break
                 upsert_message(raw_m)
     except Exception as exc:
         logger.warning(
@@ -1971,18 +2006,29 @@ def _pull_timeline_messages(
         contact_uuid_by_external=contact_uuid_by_external,
         created_from=created_from,
         created_to=created_to,
+        limit=None if limit is None else max(0, limit - processed),
     )
 
-    if processed:
-        _report_stage_items(progress, processed, every=1)
+    inbox_messages = int(inbox_coverage.get("messages_imported", 0) or 0)
+    total_processed = processed + inbox_messages
+    if total_processed:
+        _report_stage_items(progress, total_processed, every=1)
     coverage = {
-        "messages_imported": processed,
+        "messages_imported": total_processed,
         "chats_seen": len(seen_chats) + int(inbox_coverage.get("chats_seen", 0)),
         "chats_matched": int(inbox_coverage.get("chats_matched", 0)),
         "unmatched_chats": int(inbox_coverage.get("unmatched_chats", 0)),
-        "skipped_reason": ";".join(skipped) if skipped else inbox_coverage.get("skipped_reason"),
+        "deals_scanned": len(scoped_deal_rows),
+        "contacts_scanned": len(scoped_contact_rows),
+        "skipped_reason": (
+            ";".join(skipped)
+            if skipped
+            else "limit_reached"
+            if limit is not None and total_processed >= limit
+            else inbox_coverage.get("skipped_reason")
+        ),
     }
-    return processed, len(seen_chats), coverage
+    return total_processed, len(seen_chats) + int(inbox_coverage.get("chats_matched", 0)), coverage
 
 
 def _pull_inbox_chats_best_effort(
@@ -1995,6 +2041,7 @@ def _pull_inbox_chats_best_effort(
     contact_uuid_by_external: dict[str, str],
     created_from: datetime | None,
     created_to: datetime | None,
+    limit: int | None = None,
 ) -> dict[str, Any]:
     """Scan amoCRM inbox list and keep only chats matched to selected scope."""
     fetch_inbox_chats = getattr(connector, "fetch_inbox_chats", None)
@@ -2004,11 +2051,14 @@ def _pull_inbox_chats_best_effort(
     seen = 0
     matched = 0
     unmatched = 0
+    inbox_messages = 0
+    seen_message_ids: set[str] = set()
     try:
         for chat in fetch_inbox_chats(
             access_token,
             created_from=created_from,
             created_to=created_to,
+            limit=limit,
         ):
             if not isinstance(chat, dict):
                 continue
@@ -2038,7 +2088,13 @@ def _pull_inbox_chats_best_effort(
             matched += 1
             chat_external_id = str(chat_id)
             _upsert_raw(sess, schema, "raw_chats", chat_external_id, chat)
-            sess.execute(
+            channel = str(
+                chat.get("chat_source")
+                or chat.get("channel")
+                or chat.get("source")
+                or "amocrm"
+            )
+            chat_result = sess.execute(
                 text(
                     f"INSERT INTO {q_schema}.chats(id, external_id, channel, deal_id, contact_id, "
                     "started_at_external, fetched_at) "
@@ -2054,12 +2110,84 @@ def _pull_inbox_chats_best_effort(
                 {
                     "id": _uuid(),
                     "ext": chat_external_id,
-                    "channel": str(chat.get("channel") or chat.get("source") or "amocrm"),
+                    "channel": channel,
                     "deal_id": deal_uuid or "",
                     "contact_id": contact_uuid or "",
                     "started_at": None,
                 },
             )
+            chat_row = chat_result.fetchone()
+            chat_uuid = str(chat_row[0]) if chat_row and chat_row[0] else None
+            last_message = chat.get("last_message") if isinstance(chat.get("last_message"), dict) else {}
+            text_body = last_message.get("text")
+            if isinstance(text_body, str) and text_body.strip():
+                last_message_raw_id = last_message.get("id")
+                sent_at_raw = (
+                    last_message.get("last_message_at")
+                    or last_message.get("created_at")
+                    or chat.get("updated_at")
+                    or chat.get("created_at")
+                )
+                sent_at = None
+                try:
+                    if sent_at_raw is not None:
+                        sent_at = datetime.fromtimestamp(int(float(sent_at_raw)), tz=timezone.utc)
+                except (TypeError, ValueError, OverflowError):
+                    sent_at = None
+                message_external_id = (
+                    str(last_message_raw_id)
+                    if last_message_raw_id is not None
+                    else f"inbox_last:{chat_external_id}:{sent_at_raw or 'unknown'}"
+                )
+                already_seen_message = message_external_id in seen_message_ids
+                seen_message_ids.add(message_external_id)
+                _upsert_raw(
+                    sess,
+                    schema,
+                    "raw_messages",
+                    message_external_id,
+                    {
+                        **last_message,
+                        "_code9_source": "amocrm_ajax_inbox_last_message",
+                        "_code9_chat_id": chat_external_id,
+                        "_code9_deal_id": deal_external_id,
+                        "_code9_contact_id": contact_external_id,
+                    },
+                )
+                contact_name = contact_obj.get("name") if isinstance(contact_obj, dict) else None
+                author = last_message.get("author")
+                chat_type = str(chat.get("type") or "").lower()
+                author_kind = (
+                    "client"
+                    if (
+                        (isinstance(author, str) and isinstance(contact_name, str) and author == contact_name)
+                        or "incoming" in chat_type
+                        or "reply" in chat_type
+                    )
+                    else "user"
+                )
+                sess.execute(
+                    text(
+                        f"INSERT INTO {q_schema}.messages(id, external_id, chat_id, author_kind, "
+                        "author_user_id, text, sent_at_external, fetched_at) "
+                        "VALUES (CAST(:id AS UUID), :ext, CAST(NULLIF(:chat_id, '') AS UUID), "
+                        ":author_kind, NULL, :text_body, :sent_at, NOW()) "
+                        "ON CONFLICT (external_id) DO UPDATE SET "
+                        "  chat_id = EXCLUDED.chat_id, author_kind = EXCLUDED.author_kind, "
+                        "  text = EXCLUDED.text, sent_at_external = EXCLUDED.sent_at_external, "
+                        "  fetched_at = NOW()"
+                    ),
+                    {
+                        "id": _uuid(),
+                        "ext": message_external_id,
+                        "chat_id": chat_uuid or "",
+                        "author_kind": author_kind,
+                        "text_body": text_body,
+                        "sent_at": sent_at,
+                    },
+                )
+                if not already_seen_message:
+                    inbox_messages += 1
     except Exception as exc:
         logger.warning(
             "amocrm_inbox_chat_import_skipped",
@@ -2070,8 +2198,14 @@ def _pull_inbox_chats_best_effort(
             "chats_seen": seen,
             "chats_matched": matched,
             "unmatched_chats": unmatched,
+            "messages_imported": inbox_messages,
         }
-    return {"chats_seen": seen, "chats_matched": matched, "unmatched_chats": unmatched}
+    return {
+        "chats_seen": seen,
+        "chats_matched": matched,
+        "unmatched_chats": unmatched,
+        "messages_imported": inbox_messages,
+    }
 
 
 def _int_or_none(value: Any) -> int | None:
@@ -2099,6 +2233,10 @@ def pull_amocrm_core(
     deals_limit: int | None = None,
     contacts_limit: int | None = None,
     export_estimate: dict[str, Any] | None = None,
+    export_scope: str | None = None,
+    messages_limit: int | None = None,
+    messages_entity_limit: int | None = None,
+    events_limit: int | None = None,
     auto_sync: bool = False,
     job_row_id: str | None = None,
 ) -> dict[str, Any]:
@@ -2120,6 +2258,10 @@ def pull_amocrm_core(
         export_estimate: UI/API estimate snapshot stored in public.jobs.payload.
             Worker does not need it for import logic, but accepts it because
             enqueue passes payload keys as kwargs.
+        export_scope: ``None`` для основной выгрузки, ``messages`` или
+            ``events`` для безопасной отдельной догрузки тяжёлых слоёв.
+        messages_limit / messages_entity_limit / events_limit: верхние отсечки
+            для scoped-догрузок.
         auto_sync: True для scheduler-driven incremental sync.
         job_row_id: UUID public.jobs, проставляется enqueue-логикой.
 
@@ -2255,7 +2397,8 @@ def pull_amocrm_core(
         q_schema = f'"{schema}"'
         counts: dict[str, int] = {}
         messages_coverage: dict[str, Any] = {}
-        total_steps = 6 if first_pull else 16
+        scoped_export = export_scope if export_scope in {"messages", "events"} else None
+        total_steps = 4 if scoped_export else 6 if first_pull else 16
 
         with sync_session() as sess:
             # Task #52.7: schema qualified в каждом INSERT внутри _pull_*
@@ -2268,6 +2411,223 @@ def pull_amocrm_core(
                 "crm_pull_started",
                 extra={"connection_id": connection_id, "schema": schema, "first_pull": first_pull},
             )
+
+            if scoped_export:
+                deal_map = _load_external_id_map(sess, schema=schema, table="deals")
+                contact_map = _load_external_id_map(sess, schema=schema, table="contacts")
+                stage_map = _load_external_id_map(sess, schema=schema, table="stages")
+                user_map = _load_external_id_map(sess, schema=schema, table="crm_users")
+                selected_deal_rows = _load_selected_deal_rows(
+                    sess,
+                    schema=schema,
+                    created_from=created_from,
+                    created_to=created_to,
+                    pipeline_ids=selected_pipeline_ids,
+                )
+                selected_contact_rows = _load_selected_contact_rows(
+                    sess,
+                    schema=schema,
+                    created_from=created_from,
+                    created_to=created_to,
+                    pipeline_ids=selected_pipeline_ids,
+                )
+                counts = _tenant_active_export_counts(
+                    sess,
+                    schema=schema,
+                    created_from=created_from,
+                    created_to=created_to,
+                    pipeline_ids=selected_pipeline_ids,
+                )
+                update_job_progress(
+                    job_row_id,
+                    stage="contacts_scope",
+                    completed_steps=1,
+                    total_steps=total_steps,
+                    counts={
+                        **counts,
+                        "selected_deals": len(selected_deal_rows),
+                        "selected_contacts": len(selected_contact_rows),
+                    },
+                )
+
+                if scoped_export == "messages":
+                    message_limit = max(
+                        1,
+                        int(messages_limit or AMOCRM_MESSAGES_IMPORT_LIMIT_DEFAULT),
+                    )
+                    message_entity_limit = max(
+                        0,
+                        int(
+                            AMOCRM_MESSAGES_ENTITY_LIMIT_DEFAULT
+                            if messages_entity_limit is None
+                            else messages_entity_limit
+                        ),
+                    )
+                    logger.info(
+                        "amocrm_messages_import",
+                        extra={
+                            "schema": schema,
+                            "limit": message_limit,
+                            "entity_limit": message_entity_limit,
+                        },
+                    )
+                    messages_processed, chats_processed, messages_coverage = _pull_timeline_messages(
+                        sess,
+                        connector,
+                        access_token,
+                        user_map=user_map,
+                        contact_map=contact_map,
+                        deal_rows=selected_deal_rows,
+                        contact_rows=selected_contact_rows,
+                        created_from=created_from,
+                        created_to=created_to,
+                        limit=message_limit,
+                        entity_limit=message_entity_limit,
+                        schema=schema,
+                        progress=lambda n: update_job_progress(
+                            job_row_id,
+                            stage="messages",
+                            completed_steps=2,
+                            total_steps=total_steps,
+                            counts={**counts, "messages_imported": n},
+                        ),
+                    )
+                    counts = _tenant_active_export_counts(
+                        sess,
+                        schema=schema,
+                        created_from=created_from,
+                        created_to=created_to,
+                        pipeline_ids=selected_pipeline_ids,
+                    )
+                    update_job_progress(
+                        job_row_id,
+                        stage="messages",
+                        completed_steps=4,
+                        total_steps=total_steps,
+                        counts={
+                            **counts,
+                            "messages_processed": messages_processed,
+                            "chats_processed": chats_processed,
+                            "messages_chats_seen": int(messages_coverage.get("chats_seen", 0) or 0),
+                            "messages_chats_matched": int(messages_coverage.get("chats_matched", 0) or 0),
+                            "messages_unmatched_chats": int(messages_coverage.get("unmatched_chats", 0) or 0),
+                            "message_deals_scanned": int(messages_coverage.get("deals_scanned", 0) or 0),
+                            "message_contacts_scanned": int(messages_coverage.get("contacts_scanned", 0) or 0),
+                        },
+                    )
+                    metadata_extra = {
+                        "last_messages_pull_counts": counts,
+                        "last_messages_pull_at": datetime.now(tz=timezone.utc).isoformat(),
+                    }
+                    notification_title = "Догрузка сообщений amoCRM завершена"
+                    notification_body = (
+                        f"Сообщений: {counts.get('messages', 0)}, "
+                        f"чатов: {counts.get('chats', 0)}."
+                    )
+                if scoped_export == "events":
+                    event_limit = max(
+                        1,
+                        int(events_limit or AMOCRM_EVENTS_IMPORT_LIMIT_DEFAULT),
+                    )
+                    logger.info(
+                        "amocrm_events_import",
+                        extra={"schema": schema, "limit": event_limit},
+                    )
+                    events_processed = _pull_events(
+                        sess,
+                        connector,
+                        access_token,
+                        since=created_from,
+                        limit=event_limit,
+                        schema=schema,
+                        progress=lambda n: update_job_progress(
+                            job_row_id,
+                            stage="events",
+                            completed_steps=2,
+                            total_steps=total_steps,
+                            counts={**counts, "events_imported": n},
+                        ),
+                    )
+                    stage_transitions_processed = _pull_stage_transitions(
+                        sess,
+                        schema=schema,
+                        deal_map=deal_map,
+                        stage_map=stage_map,
+                        user_map=user_map,
+                    )
+                    counts = _tenant_active_export_counts(
+                        sess,
+                        schema=schema,
+                        created_from=created_from,
+                        created_to=created_to,
+                        pipeline_ids=selected_pipeline_ids,
+                    )
+                    update_job_progress(
+                        job_row_id,
+                        stage="stage_transitions",
+                        completed_steps=4,
+                        total_steps=total_steps,
+                        counts={
+                            **counts,
+                            "events_processed": events_processed,
+                            "stage_transitions_processed": stage_transitions_processed,
+                        },
+                    )
+                    metadata_extra = {
+                        "last_events_pull_counts": counts,
+                        "last_events_pull_at": datetime.now(tz=timezone.utc).isoformat(),
+                    }
+                    notification_title = "Догрузка событий amoCRM завершена"
+                    notification_body = (
+                        f"Событий: {counts.get('events', 0)}, "
+                        f"переходов этапов: {counts.get('stage_transitions', 0)}."
+                    )
+
+                active_export = _build_active_export_metadata(
+                    date_from_iso=effective_date_from_iso,
+                    date_to_iso=effective_date_to_iso,
+                    pipeline_ids=selected_pipeline_ids,
+                    counts=counts,
+                    messages_coverage=messages_coverage if scoped_export == "messages" else None,
+                )
+                metadata_patch = {
+                    "last_pull_counts": counts,
+                    "active_export": active_export,
+                    **metadata_extra,
+                }
+                sess.execute(
+                    text(
+                        "UPDATE crm_connections SET "
+                        "  updated_at = NOW(), "
+                        "  metadata = COALESCE(metadata, '{}'::jsonb) "
+                        "    || CAST(:patch AS JSONB) "
+                        "WHERE id = CAST(:cid AS UUID)"
+                    ),
+                    {
+                        "cid": connection_id,
+                        "patch": json.dumps(metadata_patch, ensure_ascii=False),
+                    },
+                )
+                result = {
+                    "connection_id": connection_id,
+                    "mock": False,
+                    "first_pull": False,
+                    "auto_sync": False,
+                    "export_scope": scoped_export,
+                    "tenant_schema": schema,
+                    "counts": counts,
+                    "audit_job_enqueued": False,
+                }
+                create_job_notification(
+                    job_row_id,
+                    kind="sync_complete",
+                    title=notification_title,
+                    body=notification_body,
+                    metadata={"counts": counts, "export_scope": scoped_export},
+                )
+                charge_token_reservation_for_job(job_row_id, result)
+                mark_job_succeeded(job_row_id, result)
+                return result
 
             if cleanup_trial:
                 _cleanup_trial_export_rows(sess, schema=schema)

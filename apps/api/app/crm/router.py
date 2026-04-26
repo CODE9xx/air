@@ -1226,6 +1226,95 @@ async def sync_connection(
     return JobCreatedResponse(job_id=str(job.id))
 
 
+async def _enqueue_scoped_amocrm_import(
+    *,
+    connection_id: uuid.UUID,
+    export_scope: str,
+    user: User,
+    session: AsyncSession,
+) -> JobCreatedResponse:
+    conn, ws = await _get_conn_for_user(session, user, connection_id)
+    if conn.status in {"deleted", "deleting", "lost_token"}:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"error": {"code": "conflict", "message": "Cannot sync in current state"}},
+        )
+    if await _active_pull_job_count(session, connection_id=conn.id):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "error": {
+                    "code": "sync_already_running",
+                    "message": "amoCRM sync is already queued or running",
+                }
+            },
+        )
+    metadata = conn.metadata_json or {}
+    active_export = metadata.get("active_export") if isinstance(metadata, dict) else None
+    if not isinstance(active_export, dict):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "error": {
+                    "code": "active_export_required",
+                    "message": "Run the real amoCRM export before importing scoped analytics layers",
+                }
+            },
+        )
+
+    payload = {
+        "connection_id": str(conn.id),
+        "first_pull": False,
+        "cleanup_trial": False,
+        "export_scope": export_scope,
+        "date_from_iso": active_export.get("date_from"),
+        "date_to_iso": active_export.get("date_to"),
+        "pipeline_ids": [str(pid) for pid in (active_export.get("pipeline_ids") or [])],
+    }
+    job = Job(
+        workspace_id=ws.id,
+        crm_connection_id=conn.id,
+        kind="pull_amocrm_core",
+        queue=queue_for_kind("pull_amocrm_core"),
+        status="queued",
+        payload=payload,
+    )
+    session.add(job)
+    await session.flush()
+    rq_id = enqueue("pull_amocrm_core", payload, job_row_id=str(job.id))
+    job.rq_job_id = rq_id
+    await session.commit()
+    return JobCreatedResponse(job_id=str(job.id))
+
+
+@router.post("/connections/{connection_id}/messages-sync", status_code=status.HTTP_202_ACCEPTED)
+async def sync_connection_messages(
+    connection_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> JobCreatedResponse:
+    return await _enqueue_scoped_amocrm_import(
+        connection_id=connection_id,
+        export_scope="messages",
+        user=user,
+        session=session,
+    )
+
+
+@router.post("/connections/{connection_id}/events-sync", status_code=status.HTTP_202_ACCEPTED)
+async def sync_connection_events(
+    connection_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> JobCreatedResponse:
+    return await _enqueue_scoped_amocrm_import(
+        connection_id=connection_id,
+        export_scope="events",
+        user=user,
+        session=session,
+    )
+
+
 # -------------------- Reconnect (mock: 501 если не mock) --------------------
 
 @router.post("/connections/{connection_id}/reconnect")

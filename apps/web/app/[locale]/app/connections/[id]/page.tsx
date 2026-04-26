@@ -64,7 +64,7 @@ type JobProgress = {
   completed_steps?: number;
   total_steps?: number;
   percent?: number;
-  counts?: Record<string, number>;
+  counts?: Record<string, number | string | null>;
   updated_at?: string;
 };
 
@@ -110,7 +110,7 @@ export default function ConnectionDetailPage() {
   const [exportJobStatus, setExportJobStatus] = useState<string | null>(null);
   const [exportJobProgress, setExportJobProgress] = useState<JobProgress | null>(null);
   const [exportJobMeta, setExportJobMeta] = useState<JobStatus | null>(null);
-  const [activeJobKind, setActiveJobKind] = useState<'export' | 'sync' | null>(null);
+  const [activeJobKind, setActiveJobKind] = useState<'export' | 'sync' | 'messages' | 'events' | null>(null);
   const [exportRunning, setExportRunning] = useState(false);
   const [syncRunning, setSyncRunning] = useState(false);
   const [exportQuote, setExportQuote] = useState<FullExportTokenQuote | null>(null);
@@ -360,6 +360,36 @@ export default function ConnectionDetailPage() {
     }
   };
 
+  const startScopedImport = async (scope: 'messages' | 'events') => {
+    if (!conn) return;
+    setSyncRunning(true);
+    try {
+      const endpoint = scope === 'messages' ? 'messages-sync' : 'events-sync';
+      const res = await api.post<{ job_id: string }>(`/crm/connections/${conn.id}/${endpoint}`);
+      setExportJobId(res.job_id);
+      setExportJobStatus('queued');
+      setExportJobProgress(null);
+      setExportJobMeta(null);
+      setActiveJobKind(scope);
+      toast({
+        kind: 'success',
+        title: connectionDetailText(
+          locale,
+          scope === 'messages' ? 'messagesImportStarted' : 'eventsImportStarted',
+        ),
+      });
+    } catch (error) {
+      if (error instanceof ApiError && error.code === 'sync_already_running') {
+        toast({ kind: 'info', title: tActions('syncAlreadyRunning') });
+      } else if (error instanceof ApiError && error.code === 'active_export_required') {
+        toast({ kind: 'warning', title: connectionDetailText(locale, 'activeExportRequired') });
+      } else {
+        toast({ kind: 'error', title: tCommon('error') });
+      }
+      setSyncRunning(false);
+    }
+  };
+
   useEffect(() => {
     if (!exportJobId) return;
     const timer = window.setInterval(async () => {
@@ -378,7 +408,14 @@ export default function ConnectionDetailPage() {
           }
           toast({
             kind: 'success',
-            title: activeJobKind === 'sync' ? tActions('syncDone') : tActions('realExportDone'),
+            title:
+              activeJobKind === 'sync'
+                ? tActions('syncDone')
+                : activeJobKind === 'messages'
+                  ? connectionDetailText(locale, 'messagesImportDone')
+                  : activeJobKind === 'events'
+                    ? connectionDetailText(locale, 'eventsImportDone')
+                    : tActions('realExportDone'),
           });
         }
         if (job.status === 'failed') {
@@ -692,10 +729,7 @@ export default function ConnectionDetailPage() {
               {exportJobProgress?.counts && Object.keys(exportJobProgress.counts).length > 0 && (
                 <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
                   {Object.entries(exportJobProgress.counts).map(([key, value]) => (
-                    <div key={key} className="rounded-md border border-border bg-white px-2 py-1.5">
-                      <div className="text-[11px] text-muted-foreground">{formatProgressCountLabel(key, locale)}</div>
-                      <div className="font-semibold tabular-nums text-foreground">{Number(value || 0).toLocaleString()}</div>
-                    </div>
+                    <ProgressCount key={key} label={formatProgressCountLabel(key, locale)} value={value} />
                   ))}
                 </div>
               )}
@@ -828,10 +862,26 @@ export default function ConnectionDetailPage() {
         <Button
           variant="secondary"
           onClick={startIncrementalSync}
-          loading={syncRunning}
+          loading={syncRunning && activeJobKind === 'sync'}
           disabled={exportRunning || syncRunning}
         >
           {tActions('syncNow')}
+        </Button>
+        <Button
+          variant="secondary"
+          onClick={() => startScopedImport('messages')}
+          loading={syncRunning && activeJobKind === 'messages'}
+          disabled={exportRunning || syncRunning}
+        >
+          {connectionDetailText(locale, 'importMessages')}
+        </Button>
+        <Button
+          variant="secondary"
+          onClick={() => startScopedImport('events')}
+          loading={syncRunning && activeJobKind === 'events'}
+          disabled={exportRunning || syncRunning}
+        >
+          {connectionDetailText(locale, 'importEvents')}
         </Button>
         <Button variant="secondary" onClick={startTrialExport}>{tActions('trialExport')}</Button>
         <Button variant="secondary" onClick={doPause}>
@@ -867,6 +917,20 @@ function CountField({ label, value, textValue }: { label: string; value: number 
       <div className="mt-1 font-semibold text-lg tabular-nums">
         {textValue ?? (typeof value === 'number' ? value.toLocaleString() : '—')}
       </div>
+    </div>
+  );
+}
+
+function ProgressCount({ label, value }: { label: string; value: number | string | null }) {
+  const numeric = typeof value === 'number' ? value : Number(value);
+  const display =
+    Number.isFinite(numeric) && value !== null && value !== ''
+      ? numeric.toLocaleString()
+      : String(value ?? '—');
+  return (
+    <div className="rounded-md border border-border bg-white px-2 py-1.5">
+      <div className="text-[11px] text-muted-foreground">{label}</div>
+      <div className="font-semibold tabular-nums text-foreground">{display}</div>
     </div>
   );
 }
@@ -1193,6 +1257,13 @@ const connectionDetailTextMap = {
     tokensEnough: 'Токенов хватает, можно запускать выгрузку.',
     tokensNotEnough: 'Недостаточно токенов для выгрузки за выбранный период.',
     topUpBalance: 'Пополнить баланс',
+    importMessages: 'Догрузить сообщения',
+    importEvents: 'Догрузить историю этапов',
+    messagesImportStarted: 'Догрузка сообщений запущена',
+    eventsImportStarted: 'Догрузка истории этапов запущена',
+    messagesImportDone: 'Сообщения догружены',
+    eventsImportDone: 'История этапов догружена',
+    activeExportRequired: 'Сначала запустите реальную выгрузку с выбранными воронками и периодом.',
   },
   en: {
     missingTokensToast: 'Missing {tokens} AIC9 tokens',
@@ -1215,6 +1286,13 @@ const connectionDetailTextMap = {
     tokensEnough: 'Enough tokens, export can be started.',
     tokensNotEnough: 'Not enough tokens for export in the selected period.',
     topUpBalance: 'Top up balance',
+    importMessages: 'Import messages',
+    importEvents: 'Import stage history',
+    messagesImportStarted: 'Message import started',
+    eventsImportStarted: 'Stage history import started',
+    messagesImportDone: 'Messages imported',
+    eventsImportDone: 'Stage history imported',
+    activeExportRequired: 'Run a real export with selected pipelines and period first.',
   },
   es: {
     missingTokensToast: 'Faltan {tokens} tokens AIC9',
@@ -1237,6 +1315,13 @@ const connectionDetailTextMap = {
     tokensEnough: 'Hay tokens suficientes, se puede iniciar la exportación.',
     tokensNotEnough: 'No hay tokens suficientes para exportar el periodo seleccionado.',
     topUpBalance: 'Recargar balance',
+    importMessages: 'Importar mensajes',
+    importEvents: 'Importar historial de etapas',
+    messagesImportStarted: 'Importación de mensajes iniciada',
+    eventsImportStarted: 'Importación del historial iniciada',
+    messagesImportDone: 'Mensajes importados',
+    eventsImportDone: 'Historial de etapas importado',
+    activeExportRequired: 'Primero ejecute una exportación real con embudos y periodo seleccionados.',
   },
 } as const;
 

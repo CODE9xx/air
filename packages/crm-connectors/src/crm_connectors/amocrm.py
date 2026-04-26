@@ -1207,11 +1207,17 @@ class AmoCrmConnector(CRMConnector):
                     else self._to_epoch(datetime.now(tz=timezone.utc))
                 )
                 params["filter[created_at][gte_lte]"] = f"{from_ts}.{to_ts}"
-            body = self._ajax_get(
-                f"ajax/v3/leads/{deal_id}/events_timeline",
-                access_token,
-                params=params,
-            )
+            try:
+                body = self._ajax_get(
+                    f"ajax/v3/leads/{deal_id}/events_timeline",
+                    access_token,
+                    params=params,
+                )
+            except ProviderError:
+                # AJAX timeline is not a stable public API. Some archived or
+                # permission-limited entities can fail while the rest of the
+                # export is valid, so keep the scoped import best-effort.
+                continue
             for items in self._timeline_lists(body):
                 for item in items:
                     if limit is not None and yielded >= limit:
@@ -1266,11 +1272,16 @@ class AmoCrmConnector(CRMConnector):
                     else self._to_epoch(datetime.now(tz=timezone.utc))
                 )
                 params["filter[created_at][gte_lte]"] = f"{from_ts}.{to_ts}"
-            body = self._ajax_get(
-                f"ajax/v3/contacts/{contact_id}/events_timeline",
-                access_token,
-                params=params,
-            )
+            try:
+                body = self._ajax_get(
+                    f"ajax/v3/contacts/{contact_id}/events_timeline",
+                    access_token,
+                    params=params,
+                )
+            except ProviderError:
+                # Keep one inaccessible contact timeline from aborting all
+                # selected-pipeline message import.
+                continue
             for items in self._timeline_lists(body):
                 for item in items:
                     if limit is not None and yielded >= limit:
